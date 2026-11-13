@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>夜间值守控制台 · 本机工作台</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<!-- 统一线性图标集（同一套 24x24 描边风格，不用 emoji 当图标） -->
+<svg class="svg-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5a8.5 8.5 0 1 0 10.8 10.8z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M21 18h-1"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6z"/><path d="M9.5 12l1.8 1.8 3.4-3.4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+</svg>
+
+<div class="app">
+  <!-- ============ 侧栏：一级导航 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark"><svg class="ico"><use href="#i-moon"/></svg></span>
+      <span class="brand-text"><strong>夜间值守</strong><small>本地控制台</small></span>
+    </div>
+
+    <nav class="nav" aria-label="主导航">
+      <p class="nav-label">工作区</p>
+      <button type="button" class="nav-item active" data-view="workbench" aria-current="page">
+        <svg class="ico"><use href="#i-grid"/></svg><span>工作台</span>
+      </button>
+      <button type="button" class="nav-item" data-view="rules">
+        <svg class="ico"><use href="#i-sliders"/></svg><span>规则表</span>
+        <span class="nav-count" id="navRulesCount" hidden>0</span>
+      </button>
+      <button type="button" class="nav-item" data-view="logs">
+        <svg class="ico"><use href="#i-file"/></svg><span>日志检索</span>
+      </button>
+      <button type="button" class="nav-item" data-view="diagnostics">
+        <svg class="ico"><use href="#i-shield"/></svg><span>诊断与文档</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="foot-line"><svg class="ico"><use href="#i-shield"/></svg><span>数据仅存本机</span></div>
+      <div class="foot-line"><svg class="ico"><use href="#i-info"/></svg><span>只监听 127.0.0.1</span></div>
+      <p class="foot-note">关闭本页不会中断监控进程</p>
+    </div>
+  </aside>
+
+  <!-- ============ 主体 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="crumb">夜间值守</span>
+        <svg class="ico crumb-sep"><use href="#i-chevron"/></svg>
+        <span class="crumb current" id="viewTitle">工作台</span>
+      </div>
+      <div class="topbar-right">
+        <span class="live-dot" id="dot" aria-hidden="true"></span>
+        <span class="live-text" id="stateText">正在读取状态…</span>
+        <span class="badge b-info" id="powerBadge">待机方式：sleep</span>
+      </div>
+      <div class="busy-bar" id="busyBar" aria-hidden="true"></div>
+    </header>
+
+    <main class="content">
+      <!-- ---------------- 视图 1：工作台 ---------------- -->
+      <section class="view active" data-view="workbench" aria-label="工作台">
+
+        <!-- 状态 Hero：全页唯一的最高视觉权重 -->
+        <section class="hero" aria-labelledby="heroStatus">
+          <div class="hero-main">
+            <p class="eyebrow">今夜值守</p>
+            <h1 class="hero-title" id="heroStatus">待命</h1>
+            <p class="hero-desc" id="heroDesc">先扫描并核对任务清单，再开启监控。</p>
+            <dl class="hero-metrics">
+              <div class="metric"><dt>监控任务</dt><dd id="heroMetricTasks">—</dd></div>
+              <div class="metric"><dt>待机方式</dt><dd id="heroMetricMode">—</dd></div>
+              <div class="metric"><dt>监控进程</dt><dd id="heroMetricProc">—</dd></div>
+            </dl>
+          </div>
+          <div class="hero-stage" aria-live="polite">
+            <p class="stage-kicker">当前阶段</p>
+            <p class="stage-name" id="stageName">01 / 扫描任务</p>
+            <p class="stage-desc" id="stageDesc">重新扫描本机 Agent，生成这一轮要盯的任务清单。</p>
+            <p class="stage-next" id="stageNext">下一步：人工核对</p>
+          </div>
+        </section>
+
+        <!-- 流程进度：既是三态指示器，也是两个子页面的切换器（1/2 → 准备清单，3/4 → 值守与自检） -->
+        <nav class="steps" id="steps" aria-label="值守流程">
+          <button type="button" class="step" data-step="1" data-page="prepare" data-target="secScan"><span class="step-n">1</span><span>扫描任务</span></button>
+          <button type="button" class="step" data-step="2" data-page="prepare" data-target="secVerify"><span class="step-n">2</span><span>人工核对</span></button>
+          <button type="button" class="step" data-step="3" data-page="watch" data-target="secWatchAction"><span class="step-n">3</span><span>开启监控</span></button>
+          <button type="button" class="step" data-step="4" data-page="watch" data-target="secSelfcheck"><span class="step-n">4</span><span>早上自检</span></button>
+        </nav>
+
+        <div class="work-grid">
+          <!-- 主区：今晚要做的事 -->
+          <div class="col-main">
+
+            <!-- 子页面一：步骤 1、2 的内容框 -->
+            <section class="subpage active" data-page="prepare" aria-label="准备清单">
+            <section class="card" id="secTasks" aria-labelledby="hTasks">
+              <header class="card-head">
+                <div>
+                  <p class="card-kicker">STEP 01 — 02</p>
+                  <h2 id="hTasks">任务清单与人工核对</h2>
+                  <p class="card-sub">切换快照版本会自动载入清单；勾选保留、取消剔除，核对后锁定本版本，监控只盯这份清单。</p>
+                </div>
+              </header>
+
+              <div class="toolbar" id="secScan">
+                <label class="field field-grow">
+                  <span>快照版本</span>
+                  <select id="snapSel" aria-label="选择快照版本"></select>
+                </label>
+                <button type="button" class="btn btn-secondary" id="btnScan">
+                  <svg class="ico"><use href="#i-refresh"/></svg>重新扫描
+                </button>
+                <button type="button" class="btn btn-ghost" id="btnScanAuto">
+                  <svg class="ico"><use href="#i-search"/></svg>自动发现并扫描
+                </button>
+              </div>
+
+              <div class="callout callout-neutral" id="snapMeta">尚未选择快照</div>
+
+              <div class="table-scroll" tabindex="0" aria-label="任务清单，可横向滚动">
+                <table id="tasks">
+                  <colgroup><col style="width:42px"><col style="width:26%"><col style="width:14%"><col style="width:16%"><col style="width:14%"><col></colgroup>
+                  <thead><tr><th scope="col"><span class="sr-only">保留</span></th><th scope="col">任务 ID</th><th scope="col">所属 Agent</th><th scope="col">开始时间</th><th scope="col">状态</th><th scope="col">状态依据</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+
+              <details class="disclosure" id="advanced">
+                <summary><svg class="ico"><use href="#i-chevron"/></svg>高级选项：重试风险决定（一般不用改）</summary>
+                <div class="disclosure-body">
+                  <p class="hint">无人值守时重试需人工触发，默认「沿用原任务 ID、无额外处理」；仅当 Agent 会自动重试并生成新任务 ID 时才需要改。</p>
+                  <fieldset class="radio-set">
+                    <legend class="sr-only">重试风险决定</legend>
+                    <label><input type="radio" name="rr" value="reuse" checked>沿用原任务 ID，无额外处理</label>
+                    <label><input type="radio" name="rr" value="accept">换新 ID，显式接受不跟踪</label>
+                    <label><input type="radio" name="rr" value="watch">换新 ID，观察重试链</label>
+                  </fieldset>
+                </div>
+              </details>
+
+              <div class="form-row" id="secVerify">
+                <label class="field"><span>操作人（可选）</span><input type="text" id="operator" placeholder="如：yourname"></label>
+                <label class="field field-grow"><span>核对备注（可选）</span><input type="text" id="reason" placeholder="这版清单的核对说明"></label>
+                <button type="button" class="btn btn-primary" id="btnVerify">
+                  <svg class="ico"><use href="#i-check"/></svg>核对并锁定此版本
+                </button>
+              </div>
+            </section>
+            </section><!-- /子页面一：准备清单 -->
+
+            <!-- 子页面二：步骤 3、4 的内容框 -->
+            <section class="subpage" data-page="watch" aria-label="值守与自检" hidden>
+            <section class="card" id="secPower" aria-labelledby="hPower">
+              <header class="card-head">
+                <div>
+                  <p class="card-kicker">STEP 03</p>
+                  <h2 id="hPower">开启监控</h2>
+                  <p class="card-sub">选好待机方式后开启值守；任务全部终结并连续稳定后才会请求待机。</p>
+                </div>
+              </header>
+              <h3 class="subhead subhead-first">待机方式</h3>
+              <div class="choices" id="choices" role="radiogroup" aria-label="待机方式"></div>
+              <div class="toolbar toolbar-tight">
+                <button type="button" class="btn btn-ghost" id="btnProbe">
+                  <svg class="ico"><use href="#i-refresh"/></svg>检测可用性
+                </button>
+                <span class="hint" id="probeMeta">尚未检测</span>
+              </div>
+              <div class="callout callout-warn" id="fixBox" hidden></div>
+              <pre id="powerProbe" class="log-output" hidden></pre>
+              <p class="hint hint-block" id="powerHint">命令按 sleep 发出，只发一条、不补发；实际进入睡眠或休眠由系统决定，两者都算成功。</p>
+
+              <div class="divider"></div>
+              <div class="watch-actions" id="secWatchAction">
+                <div class="watch-copy">
+                  <h3 class="subhead subhead-first">值守操作</h3>
+                  <p class="hint">开启时确认一次，确认令牌用后即焚。监控在独立进程运行，关闭本页不会中断；停止由监控自身优雅收尾，绝不发出睡眠命令。「直接睡眠」与值守互斥，监控运行中会禁用。</p>
+                </div>
+                <div class="watch-buttons">
+                  <button type="button" class="btn btn-secondary" id="btnSleepNow"
+                          title="不经过任务终态判定，确认后立刻让电脑进入低功耗">
+                    <svg class="ico"><use href="#i-power"/></svg>直接睡眠
+                  </button>
+                  <button type="button" class="btn btn-primary btn-lg" id="btnMonitor">
+                    <svg class="ico"><use href="#i-play"/></svg>开启监控
+                  </button>
+                  <button type="button" class="btn btn-quiet" id="btnStop" disabled>
+                    <svg class="ico"><use href="#i-stop"/></svg>优雅停止
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card" id="secSelfcheck" aria-labelledby="hSelfcheck">
+              <header class="card-head card-head-compact">
+                <div><p class="card-kicker">STEP 04</p><h2 id="hSelfcheck">早上自检</h2>
+                <p class="card-sub">唤醒后看昨晚是否真的进入低功耗。</p></div>
+              </header>
+              <button type="button" class="btn btn-secondary btn-block" id="btnSelfcheck">
+                <svg class="ico"><use href="#i-clipboard"/></svg>生成自检报告
+              </button>
+              <div id="reportBox" hidden><h3 class="subhead">自检报告</h3><pre id="report"></pre></div>
+            </section>
+            </section><!-- /子页面二：值守与自检 -->
+          </div>
+
+          <!-- 次区：当前状态全局只读，两个子页面都常驻 -->
+          <aside class="col-side" aria-label="当前状态">
+            <section class="card" aria-labelledby="hStatus">
+              <header class="card-head card-head-compact">
+                <div><h2 id="hStatus">当前状态</h2><p class="card-sub">每 3 秒自动刷新</p></div>
+              </header>
+              <dl class="kv" id="kv"></dl>
+              <p class="hint hint-block" id="confirmHint"></p>
+              <div class="callout callout-neutral" id="notice" role="status" aria-live="polite">准备就绪</div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ---------------- 视图 2：规则表 ---------------- -->
+      <section class="view" data-view="rules" aria-label="规则表" hidden>
+        <header class="view-head">
+          <div><p class="eyebrow">配置</p><h1 class="view-title">规则表</h1>
+          <p class="view-sub">某条事件/状态代表什么语义由人判断；未确认前一律按「进行中」保守处理，不会提前睡。</p></div>
+        </header>
+        <section class="card" aria-labelledby="hRules">
+          <header class="card-head">
+            <div><h2 id="hRules">待确认草案</h2><p class="card-sub" id="rulesMeta">读取中…</p></div>
+            <div class="card-actions">
+              <button type="button" class="btn btn-secondary" id="btnRulesLoad"><svg class="ico"><use href="#i-refresh"/></svg>刷新草案</button>
+              <button type="button" class="btn btn-ghost" id="btnRulesSample">重新采样</button>
+            </div>
+          </header>
+          <div id="rulesPending"></div>
+          <div class="divider"></div>
+          <div class="toolbar">
+            <button type="button" class="btn btn-quiet" id="btnRulesNoise">批量忽略建议为噪声的项</button>
+            <span class="hint">其余草案仍需逐条人工判断。</span>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="hPatterns">
+          <header class="card-head">
+            <div><h2 id="hPatterns">前缀忽略规则</h2><p class="card-sub">按命名空间批量忽略背景噪声，支持 <code>*</code> 通配。</p></div>
+          </header>
+          <div class="form-row">
+            <label class="field"><span>适配器</span><select id="patAdapter"></select></label>
+            <label class="field field-grow"><span>前缀模式</span><input type="text" id="patInput" placeholder="如 zwork.foo.*"></label>
+            <button type="button" class="btn btn-secondary" id="btnPatAdd">新增</button>
+          </div>
+          <div id="patList" class="pat-list"></div>
+          <p class="hint hint-block">若某前缀下出现真实任务事件，删除该前缀即可恢复保守判定；增删都写入 history，运行中的监控 5 秒内热重载。</p>
+        </section>
+      </section>
+
+      <!-- ---------------- 视图 3：日志检索 ---------------- -->
+      <section class="view" data-view="logs" aria-label="日志检索" hidden>
+        <header class="view-head">
+          <div><p class="eyebrow">诊断</p><h1 class="view-title">日志检索</h1>
+          <p class="view-sub">只读 <code>logs/</code> 下的 <code>*.log</code>，可关键词过滤、按末尾行数查看。</p></div>
+        </header>
+        <section class="card" aria-labelledby="hLogs">
+          <header class="card-head"><div><h2 id="hLogs">筛选条件</h2><p class="card-sub" id="logMeta">读取中…</p></div></header>
+          <div class="toolbar">
+            <label class="field field-grow"><span>日志文件</span><select id="logFile"></select></label>
+            <label class="field"><span>关键词</span><input type="text" id="logQuery" placeholder="不区分大小写"></label>
+            <label class="field"><span>显示范围</span><select id="logTail">
+              <option value="100">末 100 行</option><option value="200" selected>末 200 行</option>
+              <option value="500">末 500 行</option><option value="2000">末 2000 行</option>
+            </select></label>
+            <button type="button" class="btn btn-secondary" id="btnLogSearch"><svg class="ico"><use href="#i-search"/></svg>检索</button>
+            <label class="switch"><input type="checkbox" id="logAuto" checked><span>自动刷新</span></label>
+          </div>
+          <pre id="logs" class="log-output">读取中…</pre>
+        </section>
+      </section>
+
+      <!-- ---------------- 视图 4：诊断与文档 ---------------- -->
+      <section class="view" data-view="diagnostics" aria-label="诊断与文档" hidden>
+        <header class="view-head">
+          <div><p class="eyebrow">参考</p><h1 class="view-title">诊断与文档</h1>
+          <p class="view-sub">本机发现结果、隐私数据边界与产品资料，均为只读或需二次确认。</p></div>
+        </header>
+        <section class="card" aria-labelledby="hDocs">
+          <header class="card-head">
+            <div><h2 id="hDocs">诊断与文档</h2><p class="card-sub">点下方按钮，结果会显示在右侧输出区。</p></div>
+          </header>
+          <div class="toolbar">
+            <button type="button" class="btn btn-secondary" id="btnDiscover"><svg class="ico"><use href="#i-search"/></svg>刷新发现</button>
+            <button type="button" class="btn btn-ghost" id="btnPrivacy">隐私与数据</button>
+            <button type="button" class="btn btn-ghost" id="btnCases">验收用例集</button>
+            <button type="button" class="btn btn-ghost" id="btnMetrics">产品指标</button>
+          </div>
+          <pre id="side" class="log-output">点击上方按钮查看</pre>
+        </section>
+
+        <section class="card danger-zone" aria-labelledby="hDanger">
+          <header class="card-head">
+            <div><h2 id="hDanger">危险操作</h2><p class="card-sub">归档而非删除，可找回；执行前需输入确认词。</p></div>
+          </header>
+          <button type="button" class="btn btn-danger" id="btnPurge">
+            <svg class="ico"><use href="#i-archive"/></svg>归档清空生成物
+          </button>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>夜间值守 · 本机工作台</span>
+      <span>无网络请求 · 无第三方 SDK · 无数据上传</span>
+    </footer>
+  </div>
+</div>
+
+<!-- 自定义确认弹窗：替代原生 confirm / prompt，统一文案、焦点与危险态 -->
+<dialog class="modal" id="askDialog" aria-labelledby="askTitle">
+  <div class="modal-head">
+    <h2 id="askTitle">请确认</h2>
+    <button type="button" class="icon-btn" id="askX" aria-label="关闭对话框"><svg class="ico"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p id="askBody"></p>
+    <div class="modal-input" id="askInputWrap" hidden>
+      <label for="askInput" id="askInputLabel">请输入确认词</label>
+      <input type="text" id="askInput" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+  <div class="modal-foot">
+    <button type="button" class="btn btn-secondary" id="askCancel">取消</button>
+    <button type="button" class="btn btn-primary" id="askOk">确认</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

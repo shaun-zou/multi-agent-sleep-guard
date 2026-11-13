@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+
+  "poll_interval_seconds": 30,
+  "progress_interval_seconds": 60,
+  "heartbeat_interval_seconds": 3600,
+  "heartbeat_max_interval_seconds": 3600,
+  "stable_required": 3,
+  "stability_interval_seconds": 60,
+  "terminal_statuses": ["completed", "failed", "cancelled"],
+  "unknown_status_is_terminal": false,
+
+  "paths": {
+    "snapshots_dir": "snapshots",
+    "logs_dir": "logs",
+    "state_dir": "state",
+    "data_dir": "data"
+  },
+
+  "sleep": {
+    "dry_run": true,
+    "detached": true,
+    "prefer": "sleep",
+    "command": [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy", "Bypass",
+      "-Command",
+      "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false);"
+    ]
+  },
+
+  "selfcheck": {
+    "issued_but_not_slept_wall_seconds": 600,
+    "sleep_duration_threshold_seconds": 60,
+    "heartbeat_max_gap_seconds": 5400
+  },
+
+  "adapters": [
+    {
+      "type": "mock_file",
+      "name": "mock_file",
+      "enabled": true,
+      "options": {
+        "state_file": "data/agents_state.json",
+        "status_source": "field",
+        "idle_seconds": 0,
+        "idle_implies_status": "completed",
+        "log_dir": "data/logs"
+      }
+    }
+  ]
+}

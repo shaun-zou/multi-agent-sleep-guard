@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "title": "夜间值守控制台 前后端接口契约",
+  "base_url": "http://127.0.0.1:8765",
+  "frontend": {
+    "entry": "ui/index.html",
+    "style": "ui/app.css",
+    "script": "ui/app.js",
+    "note": "纯静态三文件，无构建步骤、无第三方依赖；只通过下列 /api/* 与后端通信，不含任何业务判定规则。"
+  },
+  "response_envelope": {
+    "ok": "boolean，操作是否成功",
+    "data": "object|null，成功时的结构化结果",
+    "message": "string，给用户的提示（含强制降级原因等）"
+  },
+  "security": {
+    "listen": "仅 127.0.0.1，不对外暴露",
+    "real_sleep": "界面有两个真睡入口，各自都必须确认一次、共用同一枚一次性令牌池：①「开启监控」= 任务全部终结后自动睡，POST /api/monitor/start 校验令牌后以 --no-dry-run 启动，写 MONITOR_CONFIRMED；②「直接睡眠」= 现在立刻睡，POST /api/sleep/now 校验同一令牌后直接发一条命令，写 SLEEP_MANUAL_ISSUED。令牌只存在于服务进程内存、TTL 10 分钟、用后即焚；无持久总闸、无演练开关，操作结束天然回到安全态。两个入口都不绕过令牌校验，且都拒绝在监控运行时重复触发",
+    "dry_run": "命令行 monitor --dry-run 保留用于演练/回归自测；演练请求不需要确认令牌",
+    "monitor_process": "monitor 为独立进程，关闭前端不影响；停止使用标志文件优雅收尾，不强杀",
+    "sleep_effect": "只发一条命令，按 sleep.prefer 决定（默认 sleep），不做运行时补发；实际进入 sleep 或 hibernate 由系统决定，两者都算成功；事后只判断'是否挂起/挂起多久'，不断言具体状态",
+    "sleep_preference": "sleep.prefer 由用户在界面「待机方式」里选择（POST /api/sleep/preference），只决定「发哪一条命令」，不构成对实际进入哪种状态的保证；可用性来自 powercfg /a 探测，探测结果只做提示与留痕",
+    "business_rules": "终态判定、稳定复核、睡眠触发顺序、真睡授权全部留在 Python 后端，前端不得实现",
+    "confirm_lifecycle": "确认令牌只存在于服务进程内存，不落盘、用后即焚、10 分钟过期；复用当前有效令牌以兼容多标签页与 3 秒轮询；服务重启即全部失效",
+    "privacy": "本工具只读结构字段、不解析消息正文、不联网不上传；见 /api/privacy 与 README 第 14 节"
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/",
+      "returns": "ui/index.html"
+    },
+    {
+      "method": "GET",
+      "path": "/app.css",
+      "returns": "ui/app.css"
+    },
+    {
+      "method": "GET",
+      "path": "/app.js",
+      "returns": "ui/app.js"
+    },
+    {
+      "method": "GET",
+      "path": "/api-contract.json",
+      "returns": "本契约文件"
+    },
+    {
+      "method": "GET",
+      "path": "/api/state",
+      "returns": "dry_run, confirm{token,ttl_seconds,note}, power{prefer,options[],recommend,capabilities,stale,age_seconds,locked_by_monitor,effect,hints,summary}, snapshots[], lock, monitor{}, sleep_intent, events[]",
+      "note": "前端每 3 秒轮询；confirm.token 为一次性确认令牌，未消费/未过期时复用同一枚"
+    },
+    {
+      "method": "GET",
+      "path": "/api/snapshots",
+      "returns": "快照摘要列表"
+    },
+    {
+      "method": "GET",
+      "path": "/api/snapshot",
+      "query": {
+        "id": "快照 ID"
+      },
+      "returns": "完整快照（含 tasks[]、version、change_log、verified、locked、retry_risk）"
+    },
+    {
+      "method": "GET",
+      "path": "/api/discover",
+      "returns": "summary, in_use_ids, changes, text（可读发现报告）",
+      "note": "persist=false，不改写发现基线"
+    },
+    {
+      "method": "GET",
+      "path": "/api/rules",
+      "returns": "fingerprint, pending[], pending_total, classified_events, observed_keys, ignore_patterns[], decisions[]",
+      "note": "P1：ignore_patterns 摊平为 {adapter,pattern} 列表供界面管理；decisions 为可选判定清单（事实来源在 CLI）"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs",
+      "returns": "files[{name,size,modified}], total",
+      "note": "P1：logs/ 下可检索的 *.log 清单（不含 archive-*），新文件在前"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/read",
+      "query": {
+        "file": "纯文件名",
+        "q": "关键词（不区分大小写，可选）",
+        "tail": "显示末 N 行，50-2000，默认 200"
+      },
+      "returns": "name, total_lines, matched, shown, truncated, lines[]",
+      "note": "P1：只允许 logs/ 下的 *.log（白名单正则，防目录穿越）；超过 8MB 拒绝整读；非法文件名返回 400"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scan",
+      "body": {
+        "auto_discover": "boolean"
+      },
+      "returns": "snapshot_id, output"
+    },
+    {
+      "method": "POST",
+      "path": "/api/revise",
+      "body": {
+        "snapshot": "ID",
+        "removed": [
+          "task_id"
+        ],
+        "reason": "string",
+        "operator": "string"
+      },
+      "returns": "新 snapshot_id；removed 为空时跳过并复用原 ID"
+    },
+    {
+      "method": "POST",
+      "path": "/api/verify",
+      "body": {
+        "snapshot": "ID",
+        "decision": "reuse|accept|watch（默认 reuse）",
+        "watch_tasks": [],
+        "operator": "string"
+      },
+      "returns": "snapshot_id, output",
+      "note": "界面主路径默认 reuse -> CLI --implicit，写 retry_risk 但标 explicit=false；高级三选一仍可用"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitor/start",
+      "body": {
+        "snapshot": "ID",
+        "confirm_token": "一次性令牌",
+        "operator": "string",
+        "dry_run": "boolean（可选，true=演练）"
+      },
+      "returns": "pid, snapshot_id, dry_run, requested_mode, reprobed, mode_available, confirmed_at",
+      "note": "未 verified+locked 直接拒绝；真实模式必须校验一次性令牌，否则拒绝启动；演练模式不需要令牌。启动前若探测结果过期（>6h）会重探一次并写 SLEEP_MODE_UNAVAILABLE（所选不可用时仅告警不拦截）；requested_mode 取自 sleep.prefer，同时写入 ui-monitor.json 与 MONITOR_CONFIRMED 事件"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitor/stop",
+      "returns": "stopped, message",
+      "note": "持续重写 state/monitor.stop 直到进程优雅退出"
+    },
+    {
+      "method": "POST",
+      "path": "/api/selfcheck",
+      "returns": "report（自检报告全文）"
+    },
+    {
+      "method": "POST",
+      "path": "/api/rules/sample",
+      "returns": "fingerprint",
+      "note": "从真实数据源重新采样规则观测值"
+    },
+    {
+      "method": "POST",
+      "path": "/api/rules/approve",
+      "body": {
+        "adapter": "string（不能含冒号/空白）",
+        "key": "string（不能含空白，冒号合法）",
+        "decision": "start|middle|end|running|queued|completed|failed|cancelled|ignore",
+        "operator": "string"
+      },
+      "returns": "adapter, key, decision",
+      "note": "P1：复用 CLI rules --approve 子进程，留痕一致；终态判定与 ignore 的返回消息里带风险提示；前端确认弹窗必须警示终态判定"
+    },
+    {
+      "method": "POST",
+      "path": "/api/rules/approve-noise",
+      "body": {
+        "operator": "string"
+      },
+      "returns": "output",
+      "note": "P1：批量确认建议为噪声(ignore)的草案，其余仍需逐条判断"
+    },
+    {
+      "method": "POST",
+      "path": "/api/rules/pattern",
+      "body": {
+        "action": "add|remove",
+        "adapter": "string",
+        "pattern": "string（不能含空格，支持 * 通配）",
+        "operator": "string"
+      },
+      "returns": "adapter, pattern, action",
+      "note": "P1：前缀忽略规则增删，复用 CLI；运行中的 monitor 5 秒内热重载"
+    },
+    {
+      "method": "POST",
+      "path": "/api/powercap",
+      "returns": "capabilities, options[], recommend, summary, effect, hints",
+      "note": "重新探测电源能力（powercfg /a + /requests）并落盘 state/power-capabilities.json；只用于提示与选择，不改变「只发一条」"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sleep/now",
+      "body": {
+        "confirm_token": "一次性确认令牌（来自 /api/state）",
+        "operator": "string",
+        "dry_run": "bool，仅回归演练用；默认 false 才真发命令"
+      },
+      "returns": "pid, mode, requested_mode, dry_run, source",
+      "note": "界面手动直接睡眠：不经过监控/终态判定，确认后立刻按 sleep.prefer 发一条命令。必须带一次性令牌（用后即焚）；已有监控运行时拒绝；只发一条、不补发、不改电源设置。intent 写 source=manual 且不绑定快照，selfcheck 不会误报快照事故，效果判定仍可算挂起时长。dry_run=true 只校验、不写任何文件、不发命令"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sleep/preference",
+      "body": {
+        "prefer": "sleep|hibernate",
+        "force": "boolean（可选，仅高级用）",
+        "operator": "string"
+      },
+      "returns": "prefer, old, recommend, options[]",
+      "note": "写回配置文件的 sleep.prefer（只改该字段）。监控运行中拒绝；目标不可用且另一种可用时拒绝并建议（除非 force）；两者都不可用时允许保存但返回告警"
+    },
+    {
+      "method": "GET",
+      "path": "/api/privacy",
+      "returns": "report, text, purge_preview",
+      "note": "读取本机数据源清单、落盘清单、合规口径；read-only，不改动任何文件"
+    },
+    {
+      "method": "POST",
+      "path": "/api/privacy/purge",
+      "body": {
+        "confirm": "大写 PURGE",
+        "operator": "string"
+      },
+      "returns": "archived_files, archive_dir, message",
+      "note": "把生成物移动到 archive-purge-*/（不删除）。需显式确认词；有监控运行时拒绝；规则表/配置/源码/data 均保留"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cases",
+      "returns": "count, text, cases[]",
+      "note": "56 条异常与恢复验收用例；cases/acceptance-cases.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics",
+      "query": {
+        "days": "回看天数，默认 7"
+      },
+      "returns": "metrics, definitions, not_available, text",
+      "note": "近 N 天产品指标周报；只统计 logs/ 正式值守，不含 acceptance/ 自测"
+    }
+  ],
+  "replacement_guide": "替换前端时只需保持上述 /api/* 契约；可把 index.html/app.css/app.js 换成任意框架产物，后端 ui_server.py 无需改动。静态资源走白名单路由，不接受任意路径（防目录穿越）。"
+}

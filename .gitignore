@@ -1,0 +1,35 @@
+# 本机运行产物与个人数据（绝不入库）
+logs/
+state/
+snapshots/
+acceptance/
+data/
+dist/
+rules/
+config.real.json
+*.log
+*.lock
+*.stale-*
+*.deprecated-*
+*.ico
+
+# 工作区内部笔记
+.workbuddy/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 打包 / 构建中间产物
+build/
+*.spec
+*.exe
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,54 @@
+{
+  "_comment": "唯一非演练配置，仅用于真机闭环验收。正式配置 config.json / config.real.json 仍 dry_run=true；本文件不会被界面或演示使用。",
+
+  "poll_interval_seconds": 2,
+  "progress_interval_seconds": 3,
+  "heartbeat_interval_seconds": 5,
+  "heartbeat_max_interval_seconds": 3600,
+  "stable_required": 2,
+  "stability_interval_seconds": 3,
+  "terminal_statuses": ["completed", "failed", "cancelled"],
+  "unknown_status_is_terminal": false,
+
+  "paths": {
+    "snapshots_dir": "acceptance/snapshots",
+    "logs_dir": "acceptance/logs",
+    "state_dir": "acceptance/state",
+    "data_dir": "acceptance/data"
+  },
+
+  "sleep": {
+    "dry_run": false,
+    "detached": true,
+    "prefer": "sleep",
+    "command": [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy", "Bypass",
+      "-Command",
+      "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false);"
+    ],
+    "command_hibernate": ["shutdown.exe", "/h"]
+  },
+
+  "selfcheck": {
+    "issued_but_not_slept_wall_seconds": 45,
+    "sleep_duration_threshold_seconds": 10,
+    "heartbeat_max_gap_seconds": 5400
+  },
+
+  "adapters": [
+    {
+      "type": "mock_file",
+      "name": "acceptance",
+      "enabled": true,
+      "options": {
+        "state_file": "acceptance/state.json",
+        "status_source": "field",
+        "idle_seconds": 0,
+        "log_dir": "acceptance/logs"
+      }
+    }
+  ]
+}

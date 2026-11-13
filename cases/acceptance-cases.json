@@ -1,0 +1,1070 @@
+{
+  "schema_version": 1,
+  "title": "多 Agent 空闲值守 · 异常与恢复验收用例集",
+  "updated_at": "2026-11-11",
+  "usage": "界面点「验收用例集」查看；或用 python agent_sleep_guard.py cases --json 导出。mode=auto 可用日志关键字做自动评测；mode=manual 需人工在界面/本机操作。所有用例均为干预期行为，除标注 C20/C22 的用例外一律可 dry-run 验证。",
+  "groups": [
+    "快照与人工核对",
+    "监控与终态",
+    "睡眠触发与效果",
+    "规则表与数据源",
+    "自检与恢复"
+  ],
+  "cases": [
+    {
+      "id": "C01",
+      "group": "快照与人工核对",
+      "title": "手动扫描生成 v1 快照",
+      "precondition": "至少一个真实 Agent 数据源健康",
+      "steps": [
+        "界面点「重新扫描」",
+        "检查任务清单列"
+      ],
+      "expected": "生成 SNAP-*-v1；每条任务含 task_id / agent / start_time / status / 状态依据；scan 只在手动触发时执行，不后台自动重扫",
+      "evidence": [
+        "SCAN | 手动扫描完成",
+        "快照 version=1",
+        "snapshots/SNAP-*.json",
+        "evidence 字段非空"
+      ],
+      "mode": "auto",
+      "command": "python agent_sleep_guard.py scan --config config.real.json",
+      "risk": "若自动重扫会破坏冻结快照原则"
+    },
+    {
+      "id": "C02",
+      "group": "快照与人工核对",
+      "title": "未核对快照拒绝启动监控",
+      "precondition": "存在 status=draft 的快照",
+      "steps": [
+        "对该快照执行 monitor --snapshot <draft>",
+        "观察返回",
+        "再执行 scan verify 后再启动"
+      ],
+      "expected": "第一次返回非 0 并提示「未经人工核对锁定」；verify 后可启动",
+      "mode": "auto",
+      "evidence": [
+        "拒绝启动: 快照 ... 未经人工核对并锁定",
+        "LOCK_ACQUIRED 只在 verify 后出现",
+        "SNAPSHOT_VERIFY"
+      ],
+      "command": "python agent_sleep_guard.py monitor --config config.real.json --snapshot <ID>",
+      "risk": "绕过核对会让监控盯错清单"
+    },
+    {
+      "id": "C03",
+      "group": "快照与人工核对",
+      "title": "人工修正清单生成新版本并留痕",
+      "precondition": "v1 已生成",
+      "steps": [
+        "界面取消勾选 1 条任务",
+        "点「核对并锁定此版本」",
+        "检查快照与事件日志",
+        "检查版本链"
+      ],
+      "expected": "生成同 family 的 v2；change_log 记录 added/removed/reason/operator；事件日志有 SNAPSHOT_VERSION_CHANGE；核对版 / 绑定版 / 睡眠记录版三者一致",
+      "evidence": [
+        "SNAPSHOT_VERSION_CHANGE",
+        "change_log",
+        "version=2",
+        "快照版本一致性 PASS"
+      ],
+      "mode": "auto",
+      "risk": "版本错配会导致盯错清单"
+    },
+    {
+      "id": "C04",
+      "group": "快照与人工核对",
+      "title": "已锁定版本不可再修订",
+      "precondition": "v2 已 verify 锁定",
+      "steps": [
+        "对 v2 再执行 scan revise",
+        "观察返回"
+      ],
+      "expected": "拒绝修订，提示「已由人工核对并锁定」，只能重新 scan 生成新 family 的 v1",
+      "evidence": [
+        "拒绝",
+        "已由人工核对并锁定"
+      ],
+      "mode": "auto",
+      "risk": "偷偷改核对版会绕过人工判断"
+    },
+    {
+      "id": "C05",
+      "group": "快照与人工核对",
+      "title": "重试风险：界面默认 + CLI 显式三选一",
+      "precondition": "v1 存在",
+      "steps": [
+        "界面直接点「核对并锁定此版本」（不改高级选项）",
+        "检查 retry_risk",
+        "CLI 执行 scan verify --retry-reuses-id false --decision no_action（应被拒绝）",
+        "再分别用 accept_untracked_retry / watch_retry_chain"
+      ],
+      "expected": "界面默认走 --implicit：retry_risk.decision=no_action、explicit=false、note 说明无人值守场景；CLI 显式路径第一种组合被拒绝，后两种成功且 explicit=true",
+      "evidence": [
+        "RETRY_RISK_DECISION",
+        "decision=no_action",
+        "explicit=false",
+        "explicit=true"
+      ],
+      "mode": "auto",
+      "risk": "界面默认值不能被误当成人工逐条判断"
+    },
+    {
+      "id": "C06",
+      "group": "快照与人工核对",
+      "title": "空清单醒目告警",
+      "precondition": "构造数据源返回 0 条任务",
+      "steps": [
+        "执行 scan",
+        "检查输出提示",
+        "尝试核对后启动 monitor"
+      ],
+      "expected": "scan 打印「扫描结果为空」告警；开启监控前必须人工确认不是数据源失效",
+      "evidence": [
+        "扫描结果为空",
+        "空清单会让监控立即满足"
+      ],
+      "mode": "manual",
+      "risk": "空清单会让监控立刻满足终态 → 误睡"
+    },
+    {
+      "id": "C07",
+      "group": "快照与人工核对",
+      "title": "交互会话提示与夜间场景",
+      "precondition": "清单含 interactive_session",
+      "steps": [
+        "检查 scan 输出的说明段",
+        "结束对话并静默 5 分钟",
+        "再次 scan"
+      ],
+      "expected": "scan 说明交互窗口夜间无用户输入后按事件位置判完成",
+      "evidence": [
+        "[说明] 清单里有 1 条交互式会话",
+        "event_position:ended+idle>=300s"
+      ],
+      "mode": "manual"
+    },
+    {
+      "id": "C08",
+      "group": "快照与人工核对",
+      "title": "快照版本一致性",
+      "precondition": "完成一次值守",
+      "steps": [
+        "运行 selfcheck"
+      ],
+      "expected": "核对版本 / BOUND_SNAPSHOT 版本 / 睡眠记录版本三者一致，检查项 PASS",
+      "evidence": [
+        "快照版本一致性 PASS",
+        "BOUND_SNAPSHOT",
+        "intent version"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C09",
+      "group": "监控与终态",
+      "title": "无超时阈值、绝不打断",
+      "precondition": "快照含 1 条长期 running 任务",
+      "steps": [
+        "启动 monitor 并等待超过任何超时阈值",
+        "检查日志与进程"
+      ],
+      "expected": "POLICY timeout_enabled=False interrupt_enabled=False；持续等待，不 kill、不 cancel、不主动 exit",
+      "evidence": [
+        "POLICY",
+        "timeout_enabled=False",
+        "interrupt_enabled=False"
+      ],
+      "mode": "manual",
+      "risk": "任何超时中断都违反铁律"
+    },
+    {
+      "id": "C10",
+      "group": "监控与终态",
+      "title": "状态读不到按 unknown 处理",
+      "precondition": "让某任务状态文件消失或 JSON 损坏",
+      "steps": [
+        "启动 monitor",
+        "检查 PROGRESS 与终态判定"
+      ],
+      "expected": "get_task_status 返回 unknown（非终态），不因读不到就判完成",
+      "evidence": [
+        "unknown",
+        "状态依据"
+      ],
+      "mode": "manual",
+      "risk": "读不到就当完成会误睡"
+    },
+    {
+      "id": "C11",
+      "group": "监控与终态",
+      "title": "清单外新任务不处理 / 不告警 / 不阻塞",
+      "precondition": "快照 3 条、数据源 4 条",
+      "steps": [
+        "启动 monitor",
+        "检查 IGNORED_NEW_TASKS"
+      ],
+      "expected": "只跟踪快照内任务；清单外条目仅记录一行",
+      "evidence": [
+        "IGNORED_NEW_TASKS",
+        "count="
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C12",
+      "group": "监控与终态",
+      "title": "瞬态抖动过滤",
+      "precondition": "任务全部终态且进入稳定复核",
+      "steps": [
+        "在复核期把一条任务改回 running",
+        "观察日志",
+        "再改回归态",
+        "继续等待",
+        "检查最终收尾"
+      ],
+      "expected": "STABILITY_CHECK passed=False → JITTER_REGRESSION → STABILITY_RESET；重新累计 3 次后才 STABILITY_CONFIRMED",
+      "evidence": [
+        "JITTER_REGRESSION",
+        "STABILITY_RESET",
+        "STABILITY_CONFIRMED"
+      ],
+      "mode": "auto",
+      "risk": "抖动未过滤会误睡"
+    },
+    {
+      "id": "C13",
+      "group": "监控与终态",
+      "title": "用户回来输入立即挡住睡眠",
+      "precondition": "交互会话已判 completed、监控仍在等待",
+      "steps": [
+        "在交互窗口输入一句",
+        "检查监控日志"
+      ],
+      "expected": "交互会话回 running（event_position:started），稳定复核被打破，不睡",
+      "evidence": [
+        "event_position:started",
+        "remaining="
+      ],
+      "mode": "manual",
+      "risk": "用户回来时被睡掉是严重事故"
+    },
+    {
+      "id": "C14",
+      "group": "监控与终态",
+      "title": "心跳连续性告警",
+      "precondition": "存在心跳断档超过 heartbeat_max_gap_seconds",
+      "steps": [
+        "运行 selfcheck"
+      ],
+      "expected": "监控存活心跳连续性 WARN，并提示监控可能中途死亡",
+      "evidence": [
+        "监控存活心跳连续性",
+        "WARN"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C15",
+      "group": "监控与终态",
+      "title": "单例锁拒绝重复启动",
+      "precondition": "一个 monitor 正在运行",
+      "steps": [
+        "再启动一个 monitor",
+        "检查退出码与提示"
+      ],
+      "expected": "第二个实例被拒绝（exit=2），提示持有者 pid / snapshot_id",
+      "evidence": [
+        "已有监控实例持有锁"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C16",
+      "group": "监控与终态",
+      "title": "优雅停止且不睡",
+      "precondition": "监控运行中",
+      "steps": [
+        "界面点「优雅停止监控」",
+        "检查主日志 / 锁 / STEP5"
+      ],
+      "expected": "日志含 MONITOR_ABORTED；锁释放；无 PRE_SLEEP / STEP5；未发出睡眠命令",
+      "evidence": [
+        "MONITOR_ABORTED",
+        "LOCK_RELEASED",
+        "无 STEP5"
+      ],
+      "mode": "auto",
+      "risk": "停止时误触发睡眠"
+    },
+    {
+      "id": "C17",
+      "group": "监控与终态",
+      "title": "进度与心跳日志齐全",
+      "precondition": "监控运行超过一个轮询周期",
+      "steps": [
+        "检查 monitor-*.log",
+        "检查 PROGRESS / HEARTBEAT"
+      ],
+      "expected": "每次轮询有 POLL；进度日志含 remaining=N 与各自 last_active；心跳每小时至少一条",
+      "evidence": [
+        "POLL",
+        "PROGRESS",
+        "HEARTBEAT"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C18",
+      "group": "监控与终态",
+      "title": "冻结快照不跟踪中途新增 Agent 任务",
+      "precondition": "监控绑定 v2",
+      "steps": [
+        "数据源新增一条任务",
+        "检查是否进入稳定复核"
+      ],
+      "expected": "新任务被记为清单外，不影响判定",
+      "evidence": [
+        "IGNORED_NEW_TASKS"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C19",
+      "group": "睡眠触发与效果",
+      "title": "STEP1–5 固定顺序且日志先关",
+      "precondition": "全部任务终态并连续稳定成立",
+      "steps": [
+        "检查 sleep-sequence 日志顺序",
+        "检查 STEP2 的 worker_alive / log_closed / polling_stopped",
+        "检查 STEP4 四项确认"
+      ],
+      "expected": "STEP1 写即将睡眠并 flush+close → STEP2 join → STEP3 更新锁与快照 → STEP4 确认无残留写 → STEP5 发命令；顺序无重排",
+      "evidence": [
+        "STEP1_",
+        "STEP2_",
+        "STEP3_",
+        "STEP4_",
+        "STEP5_"
+      ],
+      "mode": "auto",
+      "risk": "顺序错乱会损坏日志"
+    },
+    {
+      "id": "C20",
+      "group": "睡眠触发与效果",
+      "title": "dry-run 不真睡但走完流程",
+      "precondition": "默认 dry_run=true",
+      "steps": [
+        "完成一次值守",
+        "检查 DRY_RUN_SLEEP_SKIPPED",
+        "检查 intent.dry_run",
+        "检查系统挂起时长"
+      ],
+      "expected": "STEP1–5 全部完成并标注 dry_run=True；系统挂起 0 分钟",
+      "evidence": [
+        "DRY_RUN_SLEEP_SKIPPED",
+        "dry_run=True"
+      ],
+      "mode": "auto",
+      "risk": "dry-run 误睡会打断用户"
+    },
+    {
+      "id": "C21",
+      "group": "睡眠触发与效果",
+      "title": "只发一条命令、不补发",
+      "precondition": "真实值守走完",
+      "steps": [
+        "检查 intent 的 fallback_enabled / runtime_fallback",
+        "检查 STEP5 的 fallback_enabled",
+        "检查日志条数",
+        "检查诊断日志"
+      ],
+      "expected": "fallback_enabled=false、runtime_fallback=none；非演练 STEP5 恰好 1 条；诊断日志 1 条（命令进程自写）",
+      "evidence": [
+        "fallback_enabled=False",
+        "runtime_fallback",
+        "STEP5_SLEEP_COMMAND_ISSUED"
+      ],
+      "mode": "auto",
+      "risk": "运行时补发 hibernate 违反效果口径"
+    },
+    {
+      "id": "C22",
+      "group": "睡眠触发与效果",
+      "title": "命令进程诊断留痕（派发层回归）",
+      "precondition": "真实派发完成",
+      "steps": [
+        "检查 logs/sleep-command-*.log",
+        "检查字段",
+        "检查 selfcheck 的「睡眠命令诊断」项"
+      ],
+      "expected": "文件存在；setSuspendStateReturn=True、callError=none、powershellErrors=none、mode=sleep；文件不存在则说明命令进程没跑到写日志处（历史上是 DETACHED_PROCESS 导致）",
+      "evidence": [
+        "setSuspendStateReturn",
+        "callError",
+        "CREATE_NO_WINDOW"
+      ],
+      "mode": "auto",
+      "risk": "诊断日志缺失是静默失败的唯一线索"
+    },
+    {
+      "id": "C23",
+      "group": "睡眠触发与效果",
+      "title": "系统确实挂起",
+      "precondition": "真实值守且已唤醒",
+      "steps": [
+        "运行 selfcheck",
+        "对比墙钟与无偏时钟"
+      ],
+      "expected": "「效果: 系统是否进入低功耗」PASS 并报出挂起时长；报告不断言实际是 sleep 还是 hibernate",
+      "evidence": [
+        "系统确实挂起过",
+        "Kernel-Power 42 / 107"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C24",
+      "group": "睡眠触发与效果",
+      "title": "命令静默失败被识别",
+      "precondition": "构造命令未真正执行（历史：DETACHED_PROCESS）",
+      "steps": [
+        "运行 selfcheck",
+        "检查原因列表",
+        "检查诊断日志是否存在"
+      ],
+      "expected": "「效果」项 FAIL，列出可能原因；诊断日志缺失也作为独立证据",
+      "evidence": [
+        "命令已发出但系统未睡",
+        "无诊断日志"
+      ],
+      "mode": "auto",
+      "risk": "静默失败无人知晓是产品最大风险"
+    },
+    {
+      "id": "C25",
+      "group": "睡眠触发与效果",
+      "title": "prefer=hibernate 时改发 shutdown /h",
+      "precondition": "sleep.prefer=hibernate",
+      "steps": [
+        "检查 choose_command 输出",
+        "检查 STEP5 command 字段",
+        "检查诊断 mode"
+      ],
+      "expected": "命令为 shutdown /h；仍只发一条、不补发；诊断日志 mode=hibernate",
+      "evidence": [
+        "shutdown.exe /h",
+        "mode=hibernate"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C26",
+      "group": "睡眠触发与效果",
+      "title": "无确认令牌的真实模式启动被拒绝",
+      "precondition": "界面可用，已核对锁定一个快照",
+      "steps": [
+        "直接 POST /api/monitor/start 不带 confirm_token",
+        "观察返回",
+        "再带一枚已消费/伪造/过期令牌重试"
+      ],
+      "expected": "均拒绝启动、不产生任何监控进程；返回明确原因（缺少令牌 / 已被使用 / 已过期）；不会误触发真睡",
+      "evidence": [
+        "确认令牌无效",
+        "确认令牌已被使用"
+      ],
+      "mode": "auto",
+      "risk": "绕过一次确认直接真睡"
+    },
+    {
+      "id": "C27",
+      "group": "睡眠触发与效果",
+      "title": "一次确认令牌用后即焚、值守结束无残留开关",
+      "precondition": "完成一次真实值守",
+      "steps": [
+        "在「开启监控」弹窗确认一次并启动",
+        "复用同一枚令牌再次 POST /api/monitor/start",
+        "值守结束后刷新界面，检查状态与 state/ 目录"
+      ],
+      "expected": "首次成功并写 MONITOR_CONFIRMED 事件、ui-monitor.json 记 confirmed_at；复用令牌被拒绝；不存在 real_sleep_gate / gate_auto_close 之类的持久开关，界面回到待命态",
+      "evidence": [
+        "MONITOR_CONFIRMED",
+        "confirmed_at",
+        "确认令牌已被使用"
+      ],
+      "mode": "auto",
+      "risk": "持久开关残留导致下次误判"
+    },
+    {
+      "id": "C28",
+      "group": "规则表与数据源",
+      "title": "主源失效不静默返回空清单",
+      "precondition": "删除/损坏主数据源文件",
+      "steps": [
+        "执行 scan",
+        "观察返回"
+      ],
+      "expected": "抛错并提示数据源不可用；绝不返回 0 条任务",
+      "evidence": [
+        "数据源不可用",
+        "拒绝返回空清单"
+      ],
+      "mode": "auto",
+      "risk": "静默返回空清单会误睡"
+    },
+    {
+      "id": "C29",
+      "group": "规则表与数据源",
+      "title": "WorkBuddy 主源失效降级到会话事件日志",
+      "precondition": "把 db_path 指向不存在文件但 projects_dir 正常",
+      "steps": [
+        "执行 scan",
+        "检查任务 evidence"
+      ],
+      "expected": "仍能扫描到会话任务，状态依据带 +fallback:projects_jsonl 留痕",
+      "evidence": [
+        "+fallback:projects_jsonl"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C30",
+      "group": "规则表与数据源",
+      "title": "新事件未归类时保守处理",
+      "precondition": "日志出现全新事件名",
+      "steps": [
+        "执行 scan / rules",
+        "检查分类与草案"
+      ],
+      "expected": "未归类事件按 MIDDLE（进行中），生成 review 草案；绝不自动建议 end",
+      "evidence": [
+        "event_position:in_progress",
+        "suggestion=review"
+      ],
+      "mode": "auto",
+      "risk": "自动判 end 会误睡"
+    },
+    {
+      "id": "C31",
+      "group": "规则表与数据源",
+      "title": "前缀忽略命中仍可见",
+      "precondition": "ignore_patterns 已配置",
+      "steps": [
+        "运行 rules",
+        "检查报告"
+      ],
+      "expected": "命中前缀的观测值不进草案，但在「前缀自动忽略」段逐条列出（含模式与次数）；草案不含它们",
+      "evidence": [
+        "前缀自动忽略",
+        "ignore_patterns"
+      ],
+      "mode": "auto",
+      "risk": "悄悄吞掉新任务事件"
+    },
+    {
+      "id": "C32",
+      "group": "规则表与数据源",
+      "title": "前缀误吞可撤销",
+      "precondition": "某前缀下出现真实任务事件",
+      "steps": [
+        "rules --remove-ignore-pattern <前缀>",
+        "再次检查分类",
+        "确认草案重新出现"
+      ],
+      "expected": "该命名空间恢复保守判定；history 留痕",
+      "evidence": [
+        "ignore_pattern_remove",
+        "draft"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C33",
+      "group": "规则表与数据源",
+      "title": "事件无 timestamp 不影响判定",
+      "precondition": "日志含无时间戳的锁屏/挂起事件",
+      "steps": [
+        "执行 scan",
+        "检查 verdict 的 last_event"
+      ],
+      "expected": "无时间戳事件被跳过；判定取最后一条有时间戳的任务事件",
+      "evidence": [
+        "event_position",
+        "last_event"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C34",
+      "group": "规则表与数据源",
+      "title": "日志轮转与 UTC 时间转本地",
+      "precondition": "存在前一天与当天的 zwork-main-*.log",
+      "steps": [
+        "检查 _files() 读取范围",
+        "检查 start_time / last_active 时区",
+        "检查 verdict 静默秒数合理"
+      ],
+      "expected": "只回看近 N 天；UTC 时间戳统一转 +08:00，不出现 8 小时偏差",
+      "mode": "auto",
+      "evidence": [
+        "+08:00",
+        "idle_seconds"
+      ],
+      "risk": "时区错会导致误判或永不完成"
+    },
+    {
+      "id": "C35",
+      "group": "规则表与数据源",
+      "title": "应用版本升级触发复查",
+      "precondition": "Agent 版本文件变化",
+      "steps": [
+        "运行 discover",
+        "检查变更段",
+        "检查规则漂移"
+      ],
+      "expected": "报告「版本变化」并提示跑 rules 复查；规则表里有、本次未观测到的事件列入 stale",
+      "evidence": [
+        "版本变化",
+        "规则漂移",
+        "POWER_CAPABILITIES"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C36",
+      "group": "自检与恢复",
+      "title": "关键日志成对",
+      "precondition": "完成一次值守",
+      "steps": [
+        "运行 selfcheck"
+      ],
+      "expected": "STEP1_PRE_SLEEP_WRITTEN_AND_CLOSED 与 STEP5_SLEEP_COMMAND_ISSUED 同时存在",
+      "evidence": [
+        "关键日志成对 PASS"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C37",
+      "group": "自检与恢复",
+      "title": "陈旧锁告警与清理",
+      "precondition": "构造 status=running 且 pid 已死的锁",
+      "steps": [
+        "运行 selfcheck",
+        "再运行 selfcheck --clear-stale-lock"
+      ],
+      "expected": "第一次 WARN 并列出可能原因；清理后归档到 state/lock-stale-*.json",
+      "evidence": [
+        "陈旧锁",
+        "LOCK_ARCHIVED"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C38",
+      "group": "自检与恢复",
+      "title": "系统重启不做未睡判定",
+      "precondition": "TickCount64 回退",
+      "steps": [
+        "运行 selfcheck"
+      ],
+      "expected": "返回 INFO，提示改用事件日志判定，避免误报",
+      "evidence": [
+        "检测到系统已重启",
+        "INFO"
+      ],
+      "mode": "auto"
+    },
+    {
+      "id": "C39",
+      "group": "自检与恢复",
+      "title": "归档清空生成物",
+      "precondition": "界面可用，且没有监控运行",
+      "steps": [
+        "点「归档清空生成物」并输入 PURGE",
+        "检查 archive-purge-* 目录",
+        "检查配置/源码/data 未动",
+        "检查规则表保留"
+      ],
+      "expected": "生成物被移动归档而非删除；config*.json / data / asg / ui / 入口脚本 / rules/agent-rules.json 均保留",
+      "evidence": [
+        "PRIVACY_PURGE",
+        "archive-purge-",
+        "purge-note.json"
+      ],
+      "mode": "manual",
+      "risk": "误删配置或规则表"
+    },
+    {
+      "id": "C40",
+      "group": "自检与恢复",
+      "title": "监控运行中拒绝归档清空",
+      "precondition": "一个 monitor 正在运行",
+      "steps": [
+        "尝试归档清空",
+        "观察返回"
+      ],
+      "expected": "拒绝执行，提示先停止监控",
+      "evidence": [
+        "有监控正在运行"
+      ],
+      "mode": "manual"
+    },
+    {
+      "id": "C41",
+      "group": "快照与人工核对",
+      "title": "已终态子任务不进入扫描清单",
+      "precondition": "config.real.json 的 include_completed_todos=false；WorkBuddy 会话下同时存在 completed/failed/cancelled 与 in_progress/pending/unknown 的待办文件",
+      "steps": [
+        "点界面「重新扫描」生成新快照",
+        "核对清单只剩 wb-session:* 主任务 + 未完成子任务",
+        "查看 [已过滤] 段与 TODO_FILTERED 事件日志",
+        "把 include_completed_todos 改回 true 再扫一次作对照",
+        "再点「自动发现并扫描」确认开关未被改回 true"
+      ],
+      "expected": "completed/failed/cancelled 子任务被过滤并逐条留痕；主任务始终保留；running/queued 子任务保留；unknown 子任务强制保留；改回 true 后全部子任务恢复；过滤不改变监控的终态判定；自动发现路径同样生效",
+      "evidence": [
+        "[已过滤]",
+        "TODO_FILTERED",
+        "快照 tasks 不含 status=completed 的 wb-todo:*",
+        "快照 tasks 仍含 wb-session:*"
+      ],
+      "mode": "auto",
+      "command": "python agent_sleep_guard.py scan --config config.real.json",
+      "risk": "若误把 unknown 或 running 子任务过滤，会削弱「绝不打断任务」；过滤后若清单为空，监控会立即满足终态，必须人工核对"
+    },
+    {
+      "id": "C42",
+      "group": "自检与恢复",
+      "title": "PID 复用不误判监控仍在运行",
+      "precondition": "ui-monitor.json 记有已退出监控的 pid 与 started_at，且该 PID 已被系统分配给无关进程",
+      "steps": [
+        "打开界面观察状态卡与按钮",
+        "检查 /api/state monitor 字段",
+        "点「优雅停止监控」",
+        "再点「开启监控」并确认"
+      ],
+      "expected": "状态卡显示未运行并提示「PID 已被其他程序复用」；开启监控可点、优雅停止禁用；停止接口立即返回「当前没有运行中的监控」不空转 30 秒；启动检查不被旧 PID 拦截",
+      "evidence": [
+        "monitor.running=false",
+        "pid_reused=true",
+        "当前没有运行中的监控",
+        "--no-dry-run"
+      ],
+      "mode": "auto",
+      "risk": "只判断 PID 存在会误禁开启监控、让停止按钮空转，且单例锁/自检/隐私归档会连锁误判"
+    },
+    {
+      "id": "C43",
+      "group": "自检与恢复",
+      "title": "心跳连续性按「次」判定，跨次空档不误报告警",
+      "precondition": "logs/ 下存在两次以上 monitor-*.log，且两次监控之间隔了数小时（例如昨晚值守结束后，今天白天又开了一次）",
+      "steps": [
+        "运行自检，查看「监控存活心跳连续性」",
+        "确认跨两次监控的间隔未被计入断档",
+        "人为构造同一次监控内相邻心跳间隔超过 heartbeat_max_gap_seconds 的日志再跑一次",
+        "人为构造「未收尾且静默超过允许值」的日志再跑一次"
+      ],
+      "expected": "跨次空档（上一次监控结束到下一次开始，含整夜睡眠）判 PASS 并在描述里注明不计入；同一次监控内断档判 WARN；未收尾且静默超限判 WARN 并指出最后一条事件；短时监控只有一条心跳且已收尾判 INFO 不误报",
+      "evidence": [
+        "跨次空档（睡眠到次日再开监控）不计入断档",
+        "同一次监控内出现心跳断档",
+        "监控未收尾且已静默",
+        "每次监控都没超过两条"
+      ],
+      "mode": "auto",
+      "command": "python agent_sleep_guard.py selfcheck --config config.real.json",
+      "risk": "把所有心跳揉成一条时间线会把「人的作息」误判成「监控死亡」，导致每天早上的自检都带一条无意义 WARN，久而久之告警被忽略"
+    },
+    {
+      "id": "C44",
+      "group": "睡眠触发与效果",
+      "title": "待机方式不可用时拒绝保存并给出建议",
+      "precondition": "powercfg /a 显示休眠不可用（如「尚未启用休眠」）；当前 sleep.prefer=sleep",
+      "steps": [
+        "点界面「检测可用性」确认休眠项显示「不可用」及原因",
+        "尝试把待机方式切到休眠",
+        "用命令行执行 power prefer --prefer hibernate 作对照",
+        "加 --force 再试一次（仅验证可保存，不要真跑监控）"
+      ],
+      "expected": "不可用项单选钮禁用；保存被后端拒绝并给出「建议改用睡眠」；命令行同样拒绝且退出码非 0；加 --force 才会写盘并留痕 forced=True；配置文件只改 sleep.prefer 一个字段，不materialize 默认值",
+      "evidence": [
+        "在本机不可用",
+        "建议改为",
+        "SLEEP_PREFERENCE_CHANGED",
+        "--force"
+      ],
+      "mode": "auto",
+      "command": "python agent_sleep_guard.py power show --config config.real.json",
+      "risk": "允许保存一个本机做不到的待机方式，等于让用户以为今晚会睡；实际命令会被系统忽略，一整夜不睡且早上才发现"
+    },
+    {
+      "id": "C45",
+      "group": "睡眠触发与效果",
+      "title": "监控运行中锁定待机方式",
+      "precondition": "已有真实或演练监控在运行（ui-monitor.json 的 pid 存活）",
+      "steps": [
+        "观察「待机方式」两个单选钮是否为禁用状态",
+        "直接 POST /api/sleep/preference 尝试修改",
+        "优雅停止监控后再改一次"
+      ],
+      "expected": "运行中两项单选均禁用且提示「监控运行中，暂不可改」；接口返回拒绝并说明原因；停止后可正常切换；ui-monitor.json 与 MONITOR_CONFIRMED 事件都记录本次 requested_mode",
+      "evidence": [
+        "监控正在运行，不能修改待机方式",
+        "requested_mode",
+        "locked_by_monitor"
+      ],
+      "mode": "auto",
+      "risk": "运行中允许改，会让「这次到底按哪个模式睡」无法复盘；早上看到的效果与配置对不上"
+    },
+    {
+      "id": "C46",
+      "group": "睡眠触发与效果",
+      "title": "探测结果过期提示与「两种都不可用」的告警",
+      "precondition": "state/power-capabilities.json 的 probed_at 距今超过 6 小时；或人为造一份 sleep/hibernate 都不可用的探测结果",
+      "steps": [
+        "把 probed_at 改成 8 小时前，刷新界面看提示",
+        "把两份可用性都改成 false 后刷新界面与自检",
+        "恢复真实探测结果"
+      ],
+      "expected": "超过 6 小时显示「可能已过期，建议重新检测」但仍可正常工作（不阻断）；两种都不可用时允许保存但返回告警、界面显示修复建议、自检第 9 项判 WARN；恢复后回到 INFO",
+      "evidence": [
+        "可能已过期",
+        "睡眠与休眠在本机都不可用",
+        "电源能力与待机方式"
+      ],
+      "mode": "auto",
+      "command": "python agent_sleep_guard.py power probe --config config.real.json",
+      "risk": "把「没探测过」当成「不可用」会让界面长期显示错误结论；把「不可用」当成可用则会让用户误以为今晚一定会睡"
+    },
+    {
+      "id": "C47",
+      "group": "规则表与数据源",
+      "title": "界面内确认规则草案：留痕一致且带风险警示",
+      "precondition": "规则表存在待确认草案（先点「重新采样」制造；若当前无草案，可在 Agent 产生新事件后采样）",
+      "steps": [
+        "打开「规则表」卡片，读草案列表与建议徽标",
+        "任选一条，判定下拉切到终态（如 completed），点「确认」",
+        "观察弹窗文案是否明说提前睡眠风险",
+        "确认后查看事件日志与规则表 history",
+        "点「批量忽略建议为噪声的项」，确认只忽略建议为 ignore 的草案",
+        "用 CLI rules --json 对照：草案数减少、指纹变化"
+      ],
+      "expected": "确认写 RULES_APPROVED/RULES_NOISE_APPROVED 事件 + 规则表 history 双留痕，与 CLI 留痕格式一致；终态判定弹窗含「提前判完成/提前睡眠」警示；批量忽略后剩余草案均为非 ignore 建议；运行中的 monitor 5 秒内热重载新规则",
+      "evidence": [
+        "RULES_APPROVED",
+        "RULES_NOISE_APPROVED",
+        "提前睡眠风险",
+        "version_fingerprint"
+      ],
+      "mode": "auto",
+      "command": "python agent_sleep_guard.py rules --config config.real.json --json",
+      "risk": "界面绕过 CLI 另写一套确认逻辑会导致留痕分叉；缺风险警示会让人随手把 middle 确认成 end，Agent 还在跑就提前睡"
+    },
+    {
+      "id": "C48",
+      "group": "自检与恢复",
+      "title": "日志检索可用且拒绝路径穿越",
+      "precondition": "logs/ 下存在若干 *.log 文件（正常使用即有）",
+      "steps": [
+        "打开「日志检索」卡片，切换文件下拉",
+        "输入关键词（如 selfcheck）回车，核对匹配计数",
+        "把行数切到「末 2000 行」再查一次",
+        "取消「自动」勾选，确认不再自动刷新",
+        "直接请求 /api/logs/read?file=../config.real.json、file=no/such.log、file=events.log.exe"
+      ],
+      "expected": "正常文件返回 total_lines/matched/shown/lines 且先过滤后截尾；非法文件名（含路径、穿越、非 .log 后缀）一律 400；超过 8MB 的文件拒绝整读并提示；清单接口只列 logs/ 下的 *.log，不含 archive-* 子目录",
+      "evidence": [
+        "非法的日志文件名",
+        "matched",
+        "truncated",
+        "只允许 logs/ 下的 *.log"
+      ],
+      "mode": "auto",
+      "command": "curl \"http://127.0.0.1:8765/api/logs/read?file=../config.real.json\"",
+      "risk": "接口直接拼路径读文件若不白名单校验，本地服务等于开了任意文件读取口子"
+    },
+    {
+      "id": "C49",
+      "group": "监控与终态",
+      "title": "托盘不越权：不能绕过一次确认开启真实监控",
+      "precondition": "托盘已启动（托盘常驻.bat 或桌面快捷方式），系统托盘可见新月图标",
+      "steps": [
+        "右键托盘图标，逐项检查菜单",
+        "确认菜单只有「打开控制台（去确认开启）」等入口，没有「开启监控/立即睡眠」",
+        "点「查看当前状态」看气泡内容",
+        "双击图标确认打开的是控制台页面",
+        "静态检查 tray.py：不含 monitor/start 与 confirm_token 逻辑"
+      ],
+      "expected": "托盘所有动作都经既有 API（stop/selfcheck/state）或仅打开页面；不存在绕过一次性确认令牌开启真实监控的路径；真睡授权仍唯一存在于网页确认；气泡文案不承诺「已睡」，只说「已发出命令/请求睡眠」",
+      "evidence": [
+        "打开控制台（在网页里确认开启监控）",
+        "优雅停止监控（不发出睡眠命令）",
+        "Shell_NotifyIconW"
+      ],
+      "mode": "manual",
+      "risk": "托盘若自己拼 /api/monitor/start 并伪造确认，等于把真睡授权从「人确认一次」降级成「后台常驻进程随时可睡」"
+    },
+    {
+      "id": "C50",
+      "group": "自检与恢复",
+      "title": "安装/卸载往返干净且不写注册表",
+      "precondition": "尚未安装（或已卸载）；系统有 Windows 自带的 PowerShell",
+      "steps": [
+        "python install.py status 确认三项未安装",
+        "python install.py install --autostart 创建桌面/开始菜单/自启三项",
+        "python install.py status 确认三项已安装",
+        "python install.py uninstall 后再 status",
+        "检查 Startup 文件夹与注册表 Run 键"
+      ],
+      "expected": "install 幂等可重复；uninstall 三项全部移除、空目录清理；自启只存在于 Startup 文件夹（删文件即取消），注册表 HKCU Run 无新增；程序目录/日志/快照/配置在卸载后原样保留",
+      "evidence": [
+        "[已创建]",
+        "[已删除]",
+        "不写注册表",
+        "程序目录、日志、快照、配置均未改动"
+      ],
+      "mode": "auto",
+      "command": "python install.py status",
+      "risk": "快捷方式 COM 在目标目录不存在时静默失败、PowerShell GBK 输出会崩掉 UTF-8 读取线程——两条都已修，但换机器/换编码环境仍需回归"
+    },
+    {
+      "id": "C51",
+      "group": "自检与恢复",
+      "title": "单文件 exe 的参数分发与内部 CLI 通道",
+      "precondition": "已执行 python build_exe.py，产物 dist/夜间值守.exe 存在",
+      "steps": [
+        "运行「夜间值守.exe --version」，确认打印版本号且带「（打包版）」",
+        "运行「夜间值守.exe --help」，确认列出 console/tray/desktop/install 各项",
+        "运行「夜间值守.exe --bogus」，确认退出码为 2 且打印用法",
+        "运行「夜间值守.exe --asg-cli selfcheck --config <exe 旁的 config.real.json>」，确认输出与源码运行一致",
+        "运行「夜间值守.exe --asg-cli cases --json」，确认能导出 56 条用例"
+      ],
+      "expected": "一个 exe 覆盖原 5 个 .bat 的全部入口；--asg-cli 把 stdout 通过管道完整回传（不因隐藏窗口丢失）；未知参数不启动服务、直接退 2；打包版跑出的自检结论与源码版逐字一致（同一份代码，不是两条维护线）",
+      "evidence": [
+        "（打包版）",
+        "夜间值守 · 多 Agent 空闲监测",
+        "--asg-cli"
+      ],
+      "mode": "auto",
+      "command": "dist\\夜间值守.exe --version",
+      "risk": "打包后没有 agent_sleep_guard.py 这个文件，若某处仍拼 [python, 脚本] 启动子进程，会静默失败——已统一收敛到 util.cli_argv，但新增入口时必须走这个函数"
+    },
+    {
+      "id": "C52",
+      "group": "自检与恢复",
+      "title": "打包后路径分离：静态资源在包内、可写数据在 exe 旁",
+      "precondition": "把一个干净的 dist/夜间值守.exe 复制到空目录（例如 D:\\asg-test\\）",
+      "steps": [
+        "在空目录里运行「夜间值守.exe --version」与「--help」，确认目录内**仍然只有 exe**（查版本/查帮助不得有副作用）",
+        "运行「夜间值守.exe --status」触发首次运行初始化",
+        "检查该目录：应出现 config.real.json 与 logs/ snapshots/ state/，且**没有** ui/ 目录",
+        "检查 %TEMP% 下的 _MEIxxxx 目录：ui/index.html 应解包在那里（退出后可被清理）",
+        "设置 ASG_UI_PORT=8799 后运行「夜间值守.exe」，浏览器打开控制台",
+        "访问 /api/state 与 /app.css，确认 200 且 Content-Type 正确",
+        "关闭控制台后重新运行，确认上次生成的 logs/ 与 config.real.json 仍在原位"
+      ],
+      "expected": "`--version`/`--help` 零副作用（不创建任何文件）；ROOT（可写）锚定 exe 所在目录、BUNDLE（只读）锚定 _MEIPASS；界面能正常加载 CSS/JS（说明 ui/ 确实取自包内）；配置文件写在 exe 旁边而不是临时目录，重启后状态不丢；exe 目录不散落 ui/ 等只读资源",
+      "evidence": [
+        "[首次运行] 已生成默认配置",
+        "ASG_UI_PORT",
+        "index.html"
+      ],
+      "mode": "auto",
+      "command": "dist\\夜间值守.exe --version",
+      "risk": "冻结后 __file__ 指向 _MEIPASS，若 util.ROOT 仍用 __file__ 推导，配置/日志会写进临时目录并在退出时被清空（表现为「每次启动都像第一次用」）"
+    },
+    {
+      "id": "C53",
+      "group": "自检与恢复",
+      "title": "安装状态能识别「快捷方式还在、但指向旧入口」",
+      "precondition": "先用源码装过一次（快捷方式指向 pythonw tray.py），随后改用 exe",
+      "steps": [
+        "在 exe 所在目录运行「夜间值守.exe --status」",
+        "观察三项快捷方式的状态文字",
+        "在 exe 所在目录运行「夜间值守.exe --install」重装",
+        "再次运行「--status」，确认变为「指向当前入口」"
+      ],
+      "expected": "状态不能只看文件在不在：必须读出 .lnk 的 TargetPath/Arguments 与当前入口比对。源码装过再换 exe、或整个文件夹搬家后，旧快捷方式仍在但双击跑的是旧路径——应明确标成「已安装，但指向别处：… → 请重装」，重装后变为「已安装（指向当前入口）」",
+      "evidence": [
+        "指向当前入口",
+        "指向别处",
+        "请重装"
+      ],
+      "mode": "auto",
+      "command": "install.py status",
+      "risk": "只报「已安装」会让用户以为双击跑的是新版，实际仍是旧路径/旧解释器；打包版与源码版共存时最容易踩"
+    },
+    {
+      "id": "C54",
+      "group": "自检与恢复",
+      "title": "打开控制台的三级兜底与留痕：浏览器没弹出来时不能无声无息",
+      "precondition": "已打包 dist/夜间值守.exe；本机装有 Edge 或 Chrome",
+      "steps": [
+        "双击「夜间值守.exe」，观察控制台是否打印「[OK] 已在默认浏览器打开」",
+        "检查 logs/ui-open.log：应有 outcome=webbrowser 一行",
+        "运行「夜间值守.exe --desktop」：应弹出 Edge/Chrome 的 --app 独立窗口（兜底第 2 级用的就是这条通路）",
+        "用进程列表确认存在带 `--app=http://127.0.0.1:8765/` 参数的浏览器进程",
+        "全部通路都失败的场景（拔掉浏览器/改坏关联）：控制台应醒目打印「请手动访问」的地址，而不是什么都不说"
+      ],
+      "expected": "webbrowser.open 失败时自动换 CreateProcess 通路（Edge/Chrome --app 独立窗口）重试；三级全挂时控制台醒目给出 URL；每次尝试（成功与失败）都追加到 logs/ui-open.log，含 outcome 与异常原文——隔着管道看不见控制台输出也能事后取证",
+      "evidence": [
+        "已在默认浏览器打开",
+        "outcome=webbrowser",
+        "outcome=app-window",
+        "--app=http://127.0.0.1:8765/"
+      ],
+      "mode": "auto",
+      "command": "dist\\夜间值守.exe --version",
+      "risk": "旧版把 webbrowser.open 挂在 Timer 线程里静默失败：服务正常、控制台窗口在，但用户就是看不到界面且无从查证——首晚真机即发生"
+    },
+    {
+      "id": "C55",
+      "group": "自检与恢复",
+      "title": "控制台独立窗口单实例：连点只置前，绝不开第二个",
+      "precondition": "服务已运行；本机装有 Edge 或 Chrome；托盘在位",
+      "steps": [
+        "双击托盘图标（或菜单「打开控制台」），确认弹出独立窗口",
+        "立刻再双击 3-5 次",
+        "用进程列表统计命令行含 --app=http://127.0.0.1:8765 的浏览器主进程数",
+        "把窗口最小化后再双击托盘",
+        "关掉窗口（注意 Edge 可能留后台进程），再双击托盘"
+      ],
+      "expected": "窗口已存在时连点全部走「置前」路径，独立窗口进程数恒为 1；开窗后 5 秒保护期内的连点被忽略（建窗竞态）；最小化后点击能恢复并置前；关窗后（即使浏览器后台进程还在）能重新开窗——判据必须是「进程 + 可见窗口」而不是只看进程存活",
+      "evidence": [
+        "控制台窗口已打开，已置前（不再新开第二个）",
+        "独立窗口正在打开…（连点不会开第二个）",
+        "--app=http://127.0.0.1:8765"
+      ],
+      "mode": "auto",
+      "command": "python -c \"import desktop_launcher as d; d.open_window()\"",
+      "risk": "--app 窗口不做去重，点 N 下开 N 个相同窗口；只查进程不查可见窗口会被 Edge 的后台常驻进程骗到（表现为关窗后再也打不开）"
+    },
+    {
+      "id": "C56",
+      "group": "睡眠触发与效果",
+      "title": "直接睡眠：手动入口与开启监控同等级的真睡授权",
+      "precondition": "服务已运行且 /api/state 已下发一次性令牌；当前没有监控在跑；已保存所有工作",
+      "steps": [
+        "打开工作台子页面二，确认「直接睡眠」按钮位于「开启监控」之前",
+        "点「直接睡眠」阅读确认弹窗（应写明会立刻发一条命令、任务会被暂停、不启动监控），然后点取消",
+        "检查事件日志：取消后不得出现 SLEEP_MANUAL_ISSUED，也不得发出命令",
+        "不带 confirm_token 直接 POST /api/sleep/now，应拒绝且返回明确原因",
+        "带有效令牌并加 dry_run=true 演练，应返回 ok 但不写 intent、不发命令",
+        "真机验收：确认执行后系统进入低功耗；唤醒后跑自检，「效果: 系统是否进入低功耗」应为 PASS 且「快照完成状态」不得 FAIL"
+      ],
+      "expected": "手动入口不绕过安全边界：必须消费一次性令牌（用后即焚）、有监控运行时拒绝、只发一条不补发、不改电源设置；intent 带 source=manual 且不绑定快照，selfcheck 不把手动睡眠误判为值守事故；取消/演练都不产生真实命令；真机执行后自检不出现 FAIL=0 被破坏",
+      "evidence": [
+        "SLEEP_MANUAL_ISSUED",
+        "source=manual",
+        "确认令牌无效或已被使用",
+        "效果: 系统是否进入低功耗"
+      ],
+      "mode": "manual",
+      "command": "curl -X POST -H \"Content-Type: application/json\" -d '{\"confirm_token\":\"<token>\",\"dry_run\":true}' http://127.0.0.1:8765/api/sleep/now",
+      "risk": "若手动入口绕过令牌或写了绑定快照的 intent，前者等于开了第二个无授权真睡口子，后者会让第二天早上的自检把正常手动睡眠误报成快照事故"
+    }
+  ]
+}
