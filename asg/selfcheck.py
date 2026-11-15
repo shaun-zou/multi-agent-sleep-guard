@@ -218,11 +218,13 @@ def run(cfg, store, events, lock, clear_stale=False):
     intent = util.read_json(sleepctl.intent_path(cfg))
     records = _seq_records(cfg)
     sid = intent.get("snapshot_id") if intent else None
-    # 界面「直接睡眠」不经过值守流程、不绑定快照。若沿用下面的 STEP1 回退，
-    # 会拿上一次值守的快照来判完成状态，把一次正常的手动睡眠误报成事故。
-    if intent and intent.get("source") == "manual":
+    # 界面「直接睡眠」不经过值守流程、不绑定快照。既不能用它查快照完成状态，
+    # 也**不能回退到最近一次 STEP1 的快照号**——否则会拿上一次值守的版本去比对
+    # manual intent 的 version=0 占位，把一次正常手动睡眠误报成「版本冲突」。
+    manual_sleep = bool(intent and intent.get("source") == "manual")
+    if manual_sleep:
         sid = None
-    if not sid:
+    elif not sid:
         # 没跑过睡眠流程时, 用最近一次 STEP1 的快照号, 便于诊断未完成流程
         s1 = [r for r in records if r["step"] == sleepctl.STEPS[0]]
         sid = s1[-1]["snapshot_id"] if s1 else None

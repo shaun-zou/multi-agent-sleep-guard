@@ -118,6 +118,18 @@ class Monitor:
         for tid, task in list(self.pending.items()):
             status = str(self.pool.get_status(task)).lower()
             active = self.pool.get_last_active(task)
+            old = str(task.get("status") or "unknown").lower()
+            # 状态迁移留痕：原来只在"到达终态"时写 TASK_TERMINAL，非终态变化
+            # (queued -> running 等) 只改内存，事后无法还原"什么时候从什么变成什么"。
+            # 这条日志只做观察记录，不参与任何判定。
+            if status != old:
+                self.log.write(
+                    "STATUS_CHANGE", "任务状态发生变化（仅留痕，不改变判定）",
+                    task_id=tid, agent=task.get("agent"),
+                    from_status=old, to_status=status,
+                    observed_at=util.iso(),
+                    evidence=str(task.get("evidence") or "-"),
+                )
             if self._is_terminal(status):
                 done = dict(task)
                 done["status"] = status
@@ -403,8 +415,13 @@ class Monitor:
         if self.worker is not None:
             self.worker.join()
         self.lock.release(f"监控中止: {reason}")
-        self.events.emit("MONITOR_ABORTED", f"{reason}; 未发出睡眠命令", snapshot_id=self.sid)
-        print(f"[abort] 监控已中止, 未发出睡眠命令。原因: {reason}")
+        # 输出失败（无效 stdout / 日志 fd 已关等）不能把一次成功的优雅中止
+        # 冒泡成 CLI 的「监控异常退出」，否则会多归档一个 stale lock、污染事件日志。
+        try:
+            self.events.emit("MONITOR_ABORTED", f"{reason}; 未发出睡眠命令", snapshot_id=self.sid)
+            print(f"[abort] 监控已中止, 未发出睡眠命令。原因: {reason}")
+        except Exception:  # noqa: BLE001 - 中止已经完成，输出只是尽力而为
+            pass
         return False
 
     # ---------------- 入口 ----------------

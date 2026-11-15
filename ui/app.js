@@ -344,13 +344,12 @@ async function refresh(){
     // 只有重新开启监控才把当前步推回第 3 步。
     const derived = monitorRunning ? 3 : (snapData?.verified ? 3 : (snapData ? 2 : 1));
     setStep((executedSteps.has(4) && !monitorRunning) ? 4 : derived);
-    // 子页面自动切换：首次刷新只记录基线，避免把初始化本身当成一次状态跃迁；
-    // 之后只有当前步骤真的从 ≤2 跨到 ≥3 时自动切一次到值守页，并解除手动锁定。
-    // 清单加载 / 核对锁定把当前步从 1 推到 3 也算真实跨越，按规则同样切页。
-    // 其余情况一律尊重用户的手动选择（pageLock），3 秒轮询绝不抢页面。
-    if(prevStepForPage !== null && prevStepForPage <= 2 && currentStep >= 3){
+    // 唯一的自动切换：当前步骤真的从 ≤2 跨到 ≥3 那一刻切到 watch。
+    // 一旦用户手动点过步骤标签（pageLock=true）就不再抢——否则点步骤 1 想看
+    // 任务清单/时间线，下一轮轮询又被推回值守页。开启监控/自检成功会显式
+    // setPage('watch') 并解锁，不依赖这里。
+    if(prevStepForPage !== null && prevStepForPage <= 2 && currentStep >= 3 && !pageLock){
       setPage('watch');
-      pageLock = false;
     }
     prevStepForPage = currentStep;
   }catch(e){ notice('状态刷新异常: ' + e, true); }
@@ -383,6 +382,13 @@ async function loadSnapshot(sid){
       tb.appendChild(tr);
     });
   }
+  // 时间线下拉与当前快照保持同步；保留用户上一次选中的任务
+  const tlSel = $('timelineTask');
+  const prevTid = tlSel.value;
+  tlSel.innerHTML = (s.tasks||[]).map(t =>
+    `<option value="${esc(t.task_id)}">${esc(t.task_id)}　·　${esc(t.status)}</option>`).join('');
+  if(prevTid && [...tlSel.options].some(o=>o.value===prevTid)) tlSel.value = prevTid;
+  if($('timelineBox').open) loadTimeline();
   const editable = s.status === 'draft';
   document.querySelectorAll('.keep').forEach(c => c.disabled = !editable);
   $('btnVerify').disabled = !editable;
@@ -393,6 +399,65 @@ async function loadSnapshot(sid){
 /* 快照载入全部自动触发：下拉框 change / 扫描完成 / 核对锁定后 / 首屏初始化。
    不再提供「读取清单」按钮（选同一个版本重读没有实际价值）。 */
 $('snapSel').addEventListener('change', () => loadSnapshot($('snapSel').value));
+
+/* ---------------- 运行期状态时间线（只读，与冻结快照分开） ---------------- */
+const TL_LABEL = {STATUS_CHANGE:'状态变化', TASK_TERMINAL:'到达终态', RETRY_CHAIN_NOTE:'重试链留痕'};
+async function loadTimeline(){
+  const tid = $('timelineTask').value;
+  if(!tid){ $('timelineBody').innerHTML = '<p class="hint">这份快照里没有任务。</p>'; return; }
+  $('timelineBody').innerHTML = '<p class="hint">读取轨迹…</p>';
+  const scope = $('timelineAll').checked ? 'all' : 'snapshot';
+  const r = await api('/api/task-timeline?task_id=' + encodeURIComponent(tid) +
+                      '&snapshot=' + encodeURIComponent(currentSid || '') +
+                      '&scope=' + scope);
+  if(!r.ok){
+    $('timelineBody').innerHTML = '<div class="callout callout-bad">' + esc(r.message) + '</div>';
+    return;
+  }
+  renderTimeline(r.data);
+}
+function renderTimeline(d){
+  const rows = [];
+  const b = d.baseline;
+  if(b){
+    rows.push(`<li class="tl-item tl-baseline">
+      <span class="tl-dot" aria-hidden="true"></span>
+      <div class="tl-card">
+        <div class="tl-head"><time>${esc(b.created_at || '—')}</time><span class="tl-badge b-info">扫描时基线</span></div>
+        <p class="tl-main">状态 <strong>${esc(b.status || '—')}</strong>（冻结于 ${esc(b.snapshot_id || '—')}）</p>
+        <p class="tl-sub">依据 ${esc(b.evidence || '—')} · 开始 ${esc(b.start_time || '—')}</p>
+      </div></li>`);
+  }
+  (d.events || []).forEach(e => {
+    const terminal = e.event === 'TASK_TERMINAL';
+    const label = TL_LABEL[e.event] || e.event;
+    const trans = (e.from_status && e.to_status)
+      ? `${esc(e.from_status)} <span class="tl-arrow">→</span> ${esc(e.to_status)}`
+      : (terminal ? `终态 <strong>${esc(e.status || '—')}</strong>` : esc(e.msg || ''));
+    rows.push(`<li class="tl-item ${terminal ? 'tl-terminal' : 'tl-change'}">
+      <span class="tl-dot" aria-hidden="true"></span>
+      <div class="tl-card">
+        <div class="tl-head"><time>${esc(e.ts)}</time><span class="tl-badge ${terminal ? 'b-ok' : 'b-info'}">${esc(label)}</span></div>
+        <p class="tl-main">${trans}</p>
+        <p class="tl-sub">${esc(e.evidence || e.msg || '')} · ${esc(e.file || '')}</p>
+      </div></li>`);
+  });
+  let body = `<ol class="timeline-list">${rows.join('')}</ol>`;
+  if(!(d.events || []).length){
+    body += `<div class="callout callout-neutral">该任务在监控运行期<strong>没有状态迁移记录</strong>。
+      只有监控进程在跑时才会每 30 秒回查并写出 STATUS_CHANGE / TASK_TERMINAL；重新扫描生成的是另一份快照，不会回写这里。</div>`;
+  }
+  if(d.truncated) body += `<p class="hint">事件过多，仅显示 ${d.events.length} / ${d.total} 条。</p>`;
+  if(d.scope === 'snapshot' && d.other_runs > 0){
+    body += `<div class="callout callout-neutral">该任务 ID 在<strong>其他 ${esc(String(d.other_runs))} 次值守</strong>里也有记录（ID 会跨轮复用）。勾选上方「包含其他值守历史」可查看完整轨迹。</div>`;
+  }
+  body += `<p class="hint">扫描 ${esc(String(d.files_scanned || 0))} 份 monitor 日志 · ${esc(d.note || '')}</p>`;
+  $('timelineBody').innerHTML = body;
+}
+$('timelineTask').addEventListener('change', loadTimeline);
+$('timelineAll').addEventListener('change', loadTimeline);
+$('btnTimeline').addEventListener('click', loadTimeline);
+$('timelineBox').addEventListener('toggle', () => { if($('timelineBox').open) loadTimeline(); });
 
 async function doScan(auto){
   notice(auto ? '正在自动发现并扫描…' : '正在扫描…');

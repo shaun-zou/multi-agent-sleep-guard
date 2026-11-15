@@ -142,6 +142,8 @@
 
               <div class="callout callout-neutral" id="snapMeta">尚未选择快照</div>
 
+              <p class="hint hint-block">快照是扫描时冻结的清单，任务状态不会随监控实时更新；运行中的状态变化请到「日志检索」查看 <code>STATUS_CHANGE</code> / <code>TASK_TERMINAL</code>。</p>
+
               <div class="table-scroll" tabindex="0" aria-label="任务清单，可横向滚动">
                 <table id="tasks">
                   <colgroup><col style="width:42px"><col style="width:26%"><col style="width:14%"><col style="width:16%"><col style="width:14%"><col></colgroup>
@@ -149,6 +151,23 @@
                   <tbody></tbody>
                 </table>
               </div>
+
+              <details class="disclosure" id="timelineBox">
+                <summary><svg class="ico"><use href="#i-chevron"/></svg>运行期状态时间线（只读 · 与冻结快照分开）</summary>
+                <div class="disclosure-body">
+                  <p class="hint">上表是扫描时冻结的清单。这里按时间展示<strong>监控运行期间</strong>该任务的状态迁移，数据取自 <code>monitor-*.log</code>，不参与终态判定、不回写快照。</p>
+                  <div class="toolbar timeline-toolbar">
+                    <label class="field field-grow"><span>选择任务</span><select id="timelineTask" aria-label="选择要查看时间线的任务"></select></label>
+                    <button type="button" class="btn btn-secondary" id="btnTimeline">
+                      <svg class="ico"><use href="#i-refresh"/></svg>刷新轨迹
+                    </button>
+                    <label class="switch"><input type="checkbox" id="timelineAll"><span>包含其他值守历史</span></label>
+                  </div>
+                  <div id="timelineBody" class="timeline-body" aria-live="polite">
+                    <p class="hint">展开后选择任务，查看它的状态轨迹。</p>
+                  </div>
+                </div>
+              </details>
 
               <details class="disclosure" id="advanced">
                 <summary><svg class="ico"><use href="#i-chevron"/></svg>高级选项：重试风险决定（一般不用改）</summary>

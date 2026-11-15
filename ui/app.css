@@ -329,6 +329,28 @@ tbody tr:hover td{background:var(--c-surface-2)}
 .disclosure summary .ico{width:13px;height:13px;transition:transform var(--t)}
 .disclosure[open] summary .ico{transform:rotate(90deg)}
 .disclosure-body{padding:var(--sp-2) var(--sp-3) var(--sp-3)}
+/* 运行期状态时间线：只读，与冻结快照在视觉上明确分层 */
+.timeline-toolbar{margin-top:var(--sp-3)}
+.timeline-body{margin-top:var(--sp-4)}
+.timeline-list{list-style:none;margin:0;padding:0 0 0 var(--sp-5);position:relative}
+.timeline-list::before{content:"";position:absolute;left:6px;top:8px;bottom:8px;
+  width:2px;background:var(--c-border)}
+.tl-item{position:relative;padding:0 0 var(--sp-3) var(--sp-3)}
+.tl-item:last-child{padding-bottom:0}
+.tl-dot{position:absolute;left:-19px;top:9px;width:12px;height:12px;
+  border-radius:50%;background:var(--c-surface);border:2px solid var(--c-primary)}
+.tl-terminal .tl-dot{border-color:var(--c-ok);background:var(--c-ok-weak)}
+.tl-baseline .tl-dot{border-color:var(--c-text-3)}
+.tl-card{border:1px solid var(--c-border);border-radius:var(--r-md);
+  background:var(--c-surface);padding:var(--sp-3) var(--sp-4)}
+.tl-head{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.tl-head time{font:var(--fs-xs)/1.4 Consolas,monospace;color:var(--c-text-3)}
+.tl-badge{font-size:var(--fs-xs);font-weight:600;padding:2px 9px;
+  border-radius:var(--r-pill);border:1px solid var(--c-border)}
+.tl-main{margin:var(--sp-2) 0 0;font-size:var(--fs-sm);color:var(--c-text)}
+.tl-arrow{color:var(--c-primary);font-weight:650}
+.tl-sub{margin:var(--sp-1) 0 0;font-size:var(--fs-xs);
+  color:var(--c-text-3);word-break:break-word}
 .draft{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;
   padding:var(--sp-3) var(--sp-4);border:1px solid var(--c-border);border-radius:var(--r-md);
   margin-top:var(--sp-2);font-size:var(--fs-sm);background:var(--c-surface)}
@@ -432,6 +454,8 @@ pre,.log-output{background:var(--c-surface-2);border:1px solid var(--c-border);
   .toolbar .field,.form-row .field{flex:1 1 100%}
   .toolbar .hint{flex:1 1 100%}
   .choices{grid-template-columns:1fr}
+  .timeline-list{padding-left:var(--sp-4)}
+  .tl-item{padding-left:var(--sp-2)}
   .kv{grid-template-columns:minmax(80px,auto) minmax(0,1fr)}
   .crumb,.crumb-sep{display:none}
   .topbar-right{width:100%;justify-content:flex-start}

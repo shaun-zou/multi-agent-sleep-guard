@@ -17,6 +17,7 @@ import json
 import os
 import re
 import secrets
+from fnmatch import fnmatch
 import subprocess
 import sys
 import threading
@@ -248,6 +249,100 @@ def _logs_index():
     return {"files": out[:60], "total": len(out)}
 
 
+# 任务时间线只认这几类事件；POLL/PROGRESS 没有 task_id= 字段，天然不会命中。
+_TIMELINE_EVENTS = {"STATUS_CHANGE", "TASK_TERMINAL", "RETRY_CHAIN_NOTE"}
+_TIMELINE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
+_TIMELINE_MAX_FILES = 30          # 只看最近 30 份 monitor 日志
+_TIMELINE_MAX_ROWS = 200          # 返回上限，防止一条高频任务刷屏
+
+
+def _parse_kv(text):
+    """日志第四段是 `k=v k=v`，value 可能含空格，按 key 起点切分而不是 split。"""
+    marks = list(re.finditer(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=", text))
+    out = {}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        out[m.group(1)] = text[m.end():end].strip()
+    return out
+
+
+def _task_timeline(task_id, sid="", scope="snapshot"):
+    """按 task_id 聚合监控运行期的状态轨迹。纯只读，不参与任何终态判定。
+
+    默认 scope=snapshot：只看当前快照绑定的那份 monitor 日志。很多 task_id
+    （如 trae-session:ai-agent）跨多轮值守复用，全量聚合会把不同日子的终态
+    记录混成一条轨迹，看起来像「同一个任务终态了好几次」。
+    scope=all 才跨值守展示，并回带 other_runs 供界面提示。
+    """
+    tid = str(task_id or "").strip()
+    if not _TIMELINE_ID_RE.match(tid):
+        raise ValueError("非法的 task_id（只允许字母数字与 _ . : -，长度 <= 200）")
+    if scope not in ("snapshot", "all"):
+        raise ValueError("scope 只能是 snapshot 或 all")
+    baseline = None
+    if sid:
+        snap = load_snapshot(sid) or {}
+        for t in snap.get("tasks", []) or []:
+            if str(t.get("task_id")) == tid:
+                baseline = {
+                    "snapshot_id": snap.get("snapshot_id"),
+                    "created_at": snap.get("created_at"),
+                    "status": t.get("status"),
+                    "start_time": t.get("start_time"),
+                    "evidence": t.get("evidence"),
+                    "agent": t.get("agent"),
+                }
+                break
+    all_files = sorted((ROOT / "logs").glob("monitor-*.log"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)[:_TIMELINE_MAX_FILES]
+    scoped = (scope == "snapshot" and bool(sid)
+              and bool(re.match(r"^SNAP-[\w-]+$", sid)))
+    pattern = f"monitor-{sid}-*.log" if scoped else None
+    files = [p for p in all_files if fnmatch(p.name, pattern)] if pattern else all_files
+    needle = re.compile(r"(?:^|\s)task_id=" + re.escape(tid) + r"(?=\s|$)")
+    events = []
+
+    def _collect(paths):
+        found = []
+        for p in paths:
+            try:
+                if p.stat().st_size > LOG_MAX_BYTES:
+                    continue
+                lines = util.read_lines(p)
+            except (OSError, ValueError):
+                continue
+            for line in lines:
+                parts = line.split(" | ", 3)
+                if len(parts) < 4:
+                    continue
+                ts, event, msg, kvpart = parts
+                if event.strip().upper() not in _TIMELINE_EVENTS:
+                    continue
+                if not needle.search(kvpart):
+                    continue
+                kv = _parse_kv(kvpart)
+                found.append({
+                    "ts": ts.strip(), "event": event.strip().upper(), "msg": msg.strip(),
+                    "from_status": kv.get("from_status"), "to_status": kv.get("to_status"),
+                    "status": kv.get("status"), "evidence": kv.get("evidence"),
+                    "agent": kv.get("agent"), "file": p.name,
+                })
+        return found
+
+    events = _collect(files)
+    other_runs = len(_collect([p for p in all_files if p not in files])) if scoped else 0
+    events.sort(key=lambda e: e["ts"])
+    total = len(events)
+    return {
+        "task_id": tid, "baseline": baseline, "events": events[:_TIMELINE_MAX_ROWS],
+        "total": total, "truncated": total > _TIMELINE_MAX_ROWS,
+        "files_scanned": len(files), "scope": scope, "snapshot_id": sid or None,
+        "other_runs": other_runs,
+        "note": "只读展示：数据来自 monitor-*.log 与扫描时冻结的快照；"
+                "仅监控运行期间才会产生状态迁移记录，不参与终态判定、不回写快照",
+    }
+
+
 def _logs_read(name, keyword="", tail=200):
     """读单个日志文件。非法文件名/超大文件一律 ValueError，由调用方转 400。"""
     raw = str(name or "")
@@ -423,6 +518,14 @@ class Handler(BaseHTTPRequestHandler):
                     tail = 200
                 try:
                     return self._json(ok(_logs_read(name, kw, tail)))
+                except ValueError as exc:
+                    return self._json(fail(str(exc)), 400)
+            if u.path == "/api/task-timeline":
+                tid = (q.get("task_id") or [""])[0]
+                sid = (q.get("snapshot") or [""])[0]
+                scope = (q.get("scope") or ["snapshot"])[0]
+                try:
+                    return self._json(ok(_task_timeline(tid, sid, scope)))
                 except ValueError as exc:
                     return self._json(fail(str(exc)), 400)
             if u.path == "/api/privacy":

@@ -940,7 +940,7 @@
         "运行「夜间值守.exe --help」，确认列出 console/tray/desktop/install 各项",
         "运行「夜间值守.exe --bogus」，确认退出码为 2 且打印用法",
         "运行「夜间值守.exe --asg-cli selfcheck --config <exe 旁的 config.real.json>」，确认输出与源码运行一致",
-        "运行「夜间值守.exe --asg-cli cases --json」，确认能导出 56 条用例"
+        "运行「夜间值守.exe --asg-cli cases --json」，确认能导出 57 条用例"
       ],
       "expected": "一个 exe 覆盖原 5 个 .bat 的全部入口；--asg-cli 把 stdout 通过管道完整回传（不因隐藏窗口丢失）；未知参数不启动服务、直接退 2；打包版跑出的自检结论与源码版逐字一致（同一份代码，不是两条维护线）",
       "evidence": [
@@ -1065,6 +1065,31 @@
       "mode": "manual",
       "command": "curl -X POST -H \"Content-Type: application/json\" -d '{\"confirm_token\":\"<token>\",\"dry_run\":true}' http://127.0.0.1:8765/api/sleep/now",
       "risk": "若手动入口绕过令牌或写了绑定快照的 intent，前者等于开了第二个无授权真睡口子，后者会让第二天早上的自检把正常手动睡眠误报成快照事故"
+    },
+    {
+      "id": "C57",
+      "group": "快照与人工核对",
+      "title": "运行期状态时间线：与冻结快照分开、默认只看当前值守",
+      "precondition": "已上传过的快照与至少一份 monitor-*.log；界面可打开任务清单卡片",
+      "steps": [
+        "展开「运行期状态时间线」，确认标注为只读、与冻结快照分开",
+        "选择一条从未变过状态的 queued 任务，确认显示扫描时基线 + 「没有状态迁移记录」空状态",
+        "选择一条有 TASK_TERMINAL 的任务，确认时间线按时间升序、显示终态与来自哪个日志文件",
+        "勾选「包含其他值守历史」，确认跨轮记录出现且提示 other_runs",
+        "传非法 task_id（含 ../ 或超长）与非法 scope，确认返回 400 而不是读取任意文件",
+        "缩到 320px 与放大字号，确认时间线不截断关键文字、不产生横向溢出"
+      ],
+      "expected": "时间线只读、不回写快照、不参与终态判定；默认 scope=snapshot 只聚合当前快照绑定的 monitor 日志，避免跨轮复用 task_id 把多次值守终态混成一条轨迹；空轨迹时明确说明「只有监控运行期才会回查」；非法参数一律 400",
+      "evidence": [
+        "STATUS_CHANGE",
+        "TASK_TERMINAL",
+        "扫描时基线",
+        "没有状态迁移记录",
+        "非法的 task_id"
+      ],
+      "mode": "auto",
+      "command": "curl -s 'http://127.0.0.1:8765/api/task-timeline?task_id=trae-session%3Aai-agent&snapshot=SNAP-20261114T154649-v1'",
+      "risk": "若把跨值守的历史混进同一条轨迹，会让人误以为同一任务终态了多次；若时间线写回快照会让「核对锁定后不可变」的约定失效"
     }
   ]
 }

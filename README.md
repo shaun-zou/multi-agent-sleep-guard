@@ -437,13 +437,13 @@ python agent_sleep_guard.py rules --remove-ignore-pattern "zwork.foo.*" --adapte
 | `ui/index.html` | 纯结构，只留 DOM 与两个外部引用 |
 | `ui/app.css` | 全部样式 |
 | `ui/app.js` | 全部交互逻辑，只通过 `/api/*` 与后端通信 |
-| `ui/api-contract.json` | **前后端接口契约**：28 个端点的请求/响应、安全约束、替换指南 |
+| `ui/api-contract.json` | **前后端接口契约**：29 个端点的请求/响应、安全约束、替换指南 |
 
 `ui_server.py` 用**静态资源白名单**提供 `/app.css`、`/app.js`、`/api-contract.json`，不接受任意路径（防目录穿越）。Web 版与独立窗口版共用这一份 `ui/`。
 
 契约的意义：以后换成 React/Vue 或任何前端框架，只要保持 `/api/*` 契约，后端一行都不用改；反过来改后端判定规则也不影响前端。**业务规则（终态判定、稳定复核、睡眠触发顺序、真睡授权）始终留在 Python 后端，前端不得实现**——这是睡眠安全的底线。
 
-验证：三个静态资源均 200 且 MIME 正确；目录穿越返回 404；契约 28 个端点可用；扫描与自检回归 `PASS=8 / FAIL=0`。
+验证：三个静态资源均 200 且 MIME 正确；目录穿越返回 404；契约 29 个端点可用；扫描与自检回归 `PASS=8 / FAIL=0`。
 
 > 取舍：不引入 npm / Vite。这是单人本机工具，"双击即用、零安装"比构建链路更重要；前端仍是标准三文件，随时可迁入带构建的工程。
 
@@ -599,6 +599,30 @@ Hero 右侧改为**当前阶段提示**（阶段编号 / 名称 / 说明 / 下�
 | 安全 | **白名单正则 `^[A-Za-z0-9_\-\.]+\.log$`**，只允许 logs/ 下的纯文件名——目录穿越（`../config.json`）、带路径（`no/such.log`）、非 .log 后缀一律 400；超过 8MB 的文件拒绝整读，提示用关键词或文本编辑器 |
 
 接口：`GET /api/logs`（清单）、`GET /api/logs/read?file=&q=&tail=`（读取）。只读，不改任何文件；`/api/state` 里的 `events[]` 聚合尾保留（契约兼容），但日志卡已改用专用接口。
+
+**排查「为什么没睡」时看这三类记录**（11-14 卡 11 小时那次复盘后补齐）：
+
+| 关键字 | 含义 |
+| --- | --- |
+| `STATUS_CHANGE` | 任务状态迁移，带 `from_status` / `to_status` / `observed_at` / `evidence`。原来只在到达终态时写 `TASK_TERMINAL`，非终态变化（`queued → running`）只改内存，事后无法还原「什么时候从什么变成什么」；现在每次变化都留痕，**只记录不参与判定** |
+| `POLL` / `PROGRESS` | 每轮 `remaining`、各任务当前状态与最后活跃时间。todo 类任务的 `last_active` 取它自己文件的 `updatedAt`，会话类取会话心跳——两者不再混用（旧实现统一返回全局心跳，会让一条从未变过的 `pending` 待办看起来每分钟都在活动） |
+| `TASK_TERMINAL` / `STABILITY_CHECK` / `PRE_SLEEP` | 到达终态、连续稳定复核、睡前收尾。一个都没有说明连稳定复核的入口都没进 |
+
+注意：**界面「任务清单」是扫描时冻结的快照，任务状态不会随监控实时更新**（`asg/snapshot.py` 只有整体状态流转，没有任务级回写）；实时状态要看监控日志。快照卡片已加这条提示。`source=manual` 的 intent 不绑定快照，`selfcheck` 会跳过快照完成状态与版本一致性两项，避免把手动直接睡眠误判成值守事故。
+
+#### 3.12.1 运行期状态时间线（只读视图）
+
+任务清单卡片下方新增可折叠的「运行期状态时间线」，回答「这条任务从 queued 到后来发生过什么」：
+
+| 项 | 说明 |
+| --- | --- |
+| 数据来源 | `GET /api/task-timeline?task_id=&snapshot=&scope=` 聚合 `logs/monitor-*.log` 里的 `STATUS_CHANGE` / `TASK_TERMINAL` / `RETRY_CHAIN_NOTE`，按时间升序 |
+| 扫描时基线 | 从冻结快照取该任务扫描时的 `status` / `created_at` / `evidence`，作为轨迹第一点。这样即使一次迁移都没有，也能一眼看出「从扫描起就是 queued、之后 0 次变化」 |
+| 默认范围 | `scope=snapshot`，**只看当前快照绑定的那份 monitor 日志**。很多 `task_id`（如 `trae-session:ai-agent`）跨多轮值守复用，全量聚合会把不同日子的终态混成一条轨迹，看起来像同一任务终态了多次；`other_runs` 会提示其他值守还有几条，勾选「包含其他值守历史」才展开 `scope=all` |
+| 边界 | 只读：不参与终态判定、不回写快照、不改 pending 集合。没有监控在跑就无人回查，此时时间线只有基线 + 空状态说明；重新扫描生成的是另一份快照，不会补写旧轨迹 |
+| 安全 | `task_id` 白名单 `^[A-Za-z0-9_.:-]{1,200}$`、`scope` 只允许 `snapshot|all`、`snapshot` 复用 `load_snapshot` 的 `SNAP-[\w-]+` 校验；单文件超 8MB 跳过，最多扫 30 份日志、返回 200 条 |
+
+用例 C57 覆盖空轨迹、终态轨迹、跨值守切换、非法参数与窄屏。
 
 本机验证：`events-20261111.log` 全文 18 行、关键词 `selfcheck` 匹配 10 行；四类非法文件名全部 400；`tail=abc` 回退默认 200 不报错。
 
@@ -1133,7 +1157,7 @@ class MyAgentProbe(AgentProbe):
 | --- | --- | --- |
 | 值守 SOP + 入口收敛 | 第 7.7 节 | 日常唯一主路径；验收脚手架降级为可选自测；一次确认替代持久总闸 |
 | 隐私与数据边界 | 界面「隐私与数据」 + `asg/privacy.py` | 合规评审、数据清单、归档清空 |
-| 异常与恢复验收用例集 | `cases/acceptance-cases.json`（56 条） | 下发给开发/测试逐条验收 |
+| 异常与恢复验收用例集 | `cases/acceptance-cases.json`（57 条） | 下发给开发/测试逐条验收 |
 | 产品指标口径与周报 | `asg/metrics.py` + `metrics` CLI | 迭代依据 |
 | 托盘常驻 + 一键安装 | `tray.py` / `install.py` / 三个 bat（3.13、3.14） | 「记得来用」变成「一直在」；开机自启可选；分发边界见 3.14 |
 
@@ -1163,7 +1187,7 @@ class MyAgentProbe(AgentProbe):
 
 ### 14.3 异常与恢复验收用例集
 
-`cases/acceptance-cases.json` 共 **56 条**，分 5 组：快照与人工核对 9、监控与终态 11、睡眠触发与效果 13、规则表与数据源 9、自检与恢复 14。每条含 `id / group / title / precondition / steps / expected / evidence / mode / command / risk`；`mode=auto` 的可按 `evidence` 里的日志关键字做自动回归。
+`cases/acceptance-cases.json` 共 **57 条**，分 5 组：快照与人工核对 10、监控与终态 11、睡眠触发与效果 13、规则表与数据源 9、自检与恢复 14。每条含 `id / group / title / precondition / steps / expected / evidence / mode / command / risk`；`mode=auto` 的可按 `evidence` 里的日志关键字做自动回归。
 
 ```bash
 python agent_sleep_guard.py cases --json          # 导出评审用 JSON

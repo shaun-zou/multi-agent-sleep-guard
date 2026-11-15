@@ -377,6 +377,19 @@ class WorkBuddyLocalAdapter(BaseAdapter):
             return "unknown"
 
     def get_last_active(self, task):
+        # todo 是静态计划项：优先显示它自己文件里的 updatedAt。
+        # 旧实现统一返回会话心跳，会让一条从未变过的 pending 待办在 PROGRESS 日志里
+        # 看起来"每分钟都在活动"，严重误导排查（11-14 卡 11 小时那次的直接教训）。
+        if task.get("kind") == "todo":
+            f = task.get("state_file")
+            if f and Path(f).exists():
+                try:
+                    d = json.loads(Path(f).read_text(encoding="utf-8", errors="replace"))
+                    own = _iso(d.get("updatedAt"))
+                    if own:
+                        return own
+                except (OSError, ValueError, TypeError):
+                    pass
         return self._heartbeat() or task.get("last_active") or task.get("start_time")
 
     def agent_is_idle(self, agent):

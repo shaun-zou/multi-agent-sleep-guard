@@ -364,7 +364,10 @@ def cmd_monitor(args):
         lock.release("KeyboardInterrupt")
         print("[monitor] 已中断, 未发出睡眠命令。")
     except Exception as exc:  # noqa: BLE001
-        lock.release(f"监控异常退出: {exc!r}")
+        # Monitor 已经走过 _abort 时，锁已释放、中止日志已落盘；此时再 release 一次
+        # 会重复归档 stale lock 并写出误导性的「监控异常退出」事件。
+        if "m" not in locals() or not getattr(m, "aborted", False):
+            lock.release(f"监控异常退出: {exc!r}")
         raise
     # 正常结束后不主动 exit、不等待退出 (规范第七节第6点)
     return 0

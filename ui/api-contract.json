@@ -94,6 +94,17 @@
       "note": "P1：只允许 logs/ 下的 *.log（白名单正则，防目录穿越）；超过 8MB 拒绝整读；非法文件名返回 400"
     },
     {
+      "method": "GET",
+      "path": "/api/task-timeline",
+      "query": {
+        "task_id": "任务 ID（白名单 ^[A-Za-z0-9_.:-]{1,200}$）",
+        "snapshot": "可选，当前快照 ID，用于回带扫描时基线",
+        "scope": "snapshot（默认，只看当前值守）| all（跨值守）"
+      },
+      "returns": "task_id, baseline, events[], total, truncated, files_scanned, scope, snapshot_id, other_runs, note",
+      "note": "只读时间线：聚合 logs/monitor-*.log 中该 task_id 的 STATUS_CHANGE / TASK_TERMINAL / RETRY_CHAIN_NOTE，按时间排序；baseline 来自冻结快照。默认 scope=snapshot 避免跨轮复用同一 task_id 造成混淆，other_runs 提示其他值守的记录数。不参与终态判定、不回写快照；单文件超 8MB 跳过，最多扫 30 份日志、返回 200 条"
+    },
+    {
       "method": "POST",
       "path": "/api/scan",
       "body": {
@@ -236,7 +247,7 @@
       "method": "GET",
       "path": "/api/cases",
       "returns": "count, text, cases[]",
-      "note": "56 条异常与恢复验收用例；cases/acceptance-cases.json"
+      "note": "57 条异常与恢复验收用例；cases/acceptance-cases.json"
     },
     {
       "method": "GET",
