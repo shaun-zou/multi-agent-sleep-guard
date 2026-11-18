@@ -284,9 +284,11 @@ class WorkBuddyProbe(AgentProbe):
                 "db_path": found.get("db_path"), "tasks_dir": found.get("tasks"),
                 "projects_dir": found.get("projects_dir"), "sessions_dir": found.get("sessions"),
                 "logs_dir": found.get("logs_dir"),
-                # 与 config.real.json 保持一致：默认不把已终态的待办子任务纳入清单，
-                # 否则「自动发现并扫描」会把用户手工关掉的开关又硬编码回 True。
+                # 与 config.real.json 保持一致：默认不把「已终态」和「queued=计划清单里
+                # 尚未勾选开始」的待办子任务纳入清单，否则「自动发现并扫描」会把用户
+                # 手工关掉的开关又硬编码回 True，僵尸待办重新卡住值守。
                 "include_interactive": True, "include_completed_todos": False,
+                "include_pending_todos": False,
                 "idle_confirm_seconds": 300,
                 "primary_source": selected.key if selected else "",
                 "source_fallbacks": self._fallbacks(attempts),

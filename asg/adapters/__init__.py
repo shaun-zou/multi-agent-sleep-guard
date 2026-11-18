@@ -70,7 +70,10 @@ class AdapterPool:
         return ", ".join(a.describe() for a in self.adapters)
 
     def filtered_todos(self):
-        """最近一次 scan_tasks 被过滤掉的终态子任务（逐条留痕，防止悄悄吞掉）。"""
+        """最近一次 scan_tasks 被过滤掉的子任务（逐条留痕，防止悄悄吞掉）。
+
+        每条带 reason: completed（已终态）/ pending（计划清单里尚未勾选开始）。
+        """
         out = []
         for a in self.adapters:
             for item in getattr(a, "filtered_todos", []):

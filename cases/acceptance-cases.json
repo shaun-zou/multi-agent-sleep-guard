@@ -940,7 +940,7 @@
         "运行「夜间值守.exe --help」，确认列出 console/tray/desktop/install 各项",
         "运行「夜间值守.exe --bogus」，确认退出码为 2 且打印用法",
         "运行「夜间值守.exe --asg-cli selfcheck --config <exe 旁的 config.real.json>」，确认输出与源码运行一致",
-        "运行「夜间值守.exe --asg-cli cases --json」，确认能导出 57 条用例"
+        "运行「夜间值守.exe --asg-cli cases --json」，确认能导出 59 条用例"
       ],
       "expected": "一个 exe 覆盖原 5 个 .bat 的全部入口；--asg-cli 把 stdout 通过管道完整回传（不因隐藏窗口丢失）；未知参数不启动服务、直接退 2；打包版跑出的自检结论与源码版逐字一致（同一份代码，不是两条维护线）",
       "evidence": [
@@ -1090,6 +1090,53 @@
       "mode": "auto",
       "command": "curl -s 'http://127.0.0.1:8765/api/task-timeline?task_id=trae-session%3Aai-agent&snapshot=SNAP-20261114T154649-v1'",
       "risk": "若把跨值守的历史混进同一条轨迹，会让人误以为同一任务终态了多次；若时间线写回快照会让「核对锁定后不可变」的约定失效"
+    },
+    {
+      "id": "C58",
+      "group": "快照与人工核对",
+      "title": "默认不把 queued（计划清单未勾选）的 todo 纳入值守清单",
+      "precondition": "config.real.json 的 workbuddy_local 有 include_pending_todos=false；数据源里同时存在 pending / in_progress / completed 的 todo",
+      "steps": [
+        "把 include_pending_todos 设为 false，重新扫描，检查 queued 的 wb-todo 不在快照里",
+        "确认 running / unknown 的 wb-todo 仍保留，wb-session:* 会话级主任务始终保留",
+        "检查 scan 输出与 TODO_FILTERED 事件：逐条列出被过滤项、reason=pending、by_reason 计数",
+        "把 include_pending_todos 改回 true 再扫描，确认 queued 项恢复、会话级任务数不变",
+        "用「自动发现并扫描」验证 discovery 生成的配置不会把开关改回 true"
+      ],
+      "expected": "默认只盯会话级主任务 + 正在执行/读不到的子任务；queued 计划项被过滤且逐条留痕，不静默吞掉；配置可一键恢复保守行为；旧快照不被改写，只对新快照生效",
+      "evidence": [
+        "include_pending_todos",
+        "reason=pending",
+        "TODO_FILTERED",
+        "[已过滤]",
+        "wb-session"
+      ],
+      "mode": "auto",
+      "command": "python -c \"from asg.config import Config; from asg.adapters.workbuddy_local import WorkBuddyLocalAdapter; c=Config('config.real.json'); o=[a for a in c.raw['adapters'] if a['type']=='workbuddy_local'][0]['options']; a=WorkBuddyLocalAdapter('workbuddy_local',o,c); t=a.scan_tasks(); print(len(t),[(x['status'],x['reason']) for x in a.filtered_todos])\"",
+      "risk": "若把 queued 计划项当未终结任务，值守会永远等一条永远不会自动完成的待办（11-14 卡 11 小时）；若过滤时连 running/unknown 或会话级主任务一起丢掉，则可能提前睡眠"
+    },
+    {
+      "id": "C59",
+      "group": "快照与人工核对",
+      "title": "子页面切换不做滚动定位；人工核对成功后自动进入子页面二",
+      "precondition": "工作台已加载含 4 个步骤标签的快照，且当前处于任一子页面",
+      "steps": [
+        "记录当前 scrollY，依次点击步骤 1/2/3/4 标签，确认子页面按 data-page 切换（1/2→prepare，3/4→watch）",
+        "每次点击后检查 scrollY 基本不变（无 scrollIntoView 调用），页面不跳到扫描工具条/核对表单/值守操作/自检报告锚点",
+        "检查步骤标签 HTML 已无 data-target 属性，app.js 步骤点击 handler 不再调用 scrollIntoView",
+        "在人工核对页点「核对并锁定此版本」，确认成功后页面自动切到子页面二（值守与自检）",
+        "确认自动切页同时解除 pageLock、prevStepForPage 对齐当前步，后续 3 秒轮询不会把页面拉回准备清单"
+      ],
+      "expected": "点标签只切子页面、不滚动；核对锁定成功是进入值守阶段的显式信号，自动落到子页面二；点击标签仍不篡改蓝色高亮的当前步骤",
+      "evidence": [
+        "data-page",
+        "setPage('watch')",
+        "pageLock=false",
+        "prevStepForPage"
+      ],
+      "mode": "auto",
+      "command": "浏览器控制台：const y=window.scrollY; document.querySelector('.step[data-step=\"3\"]').click(); console.log(y, window.scrollY, [...document.querySelectorAll('.subpage')].filter(p=>!p.hidden).map(p=>p.dataset.page))",
+      "risk": "若保留滚动定位，点步骤标签会把页面跳到卡片内部锚点，与「只看另一个子页面」的预期不符；若核对成功后不自动切页，用户仍停留在准备清单页，找不到开启监控入口"
     }
   ]
 }

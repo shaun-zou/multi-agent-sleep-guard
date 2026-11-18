@@ -110,7 +110,8 @@
       "body": {
         "auto_discover": "boolean"
       },
-      "returns": "snapshot_id, output"
+      "returns": "snapshot_id, output",
+      "note": "生成一份新快照。workbuddy_local 适配器按 options 过滤子任务：include_completed_todos=false 排除已终态 todo；include_pending_todos=false（默认）排除 queued/pending 的计划清单项。会话级 wb-session:* 与 running/unknown 子任务始终保留。被过滤项逐条留痕并写 TODO_FILTERED 事件。auto_discover=true 时先由 discover 探测数据源再扫描"
     },
     {
       "method": "POST",
@@ -247,7 +248,7 @@
       "method": "GET",
       "path": "/api/cases",
       "returns": "count, text, cases[]",
-      "note": "57 条异常与恢复验收用例；cases/acceptance-cases.json"
+      "note": "59 条异常与恢复验收用例；cases/acceptance-cases.json"
     },
     {
       "method": "GET",

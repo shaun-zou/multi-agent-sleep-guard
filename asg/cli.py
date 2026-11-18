@@ -261,21 +261,30 @@ def cmd_scan(args):
               f"{', '.join(pool.skipped_not_running)}")
     filtered = pool.filtered_todos()
     if filtered:
-        by_status = {}
+        by_status, by_reason = {}, {}
         for item in filtered:
             by_status[item["status"]] = by_status.get(item["status"], 0) + 1
+            r = item.get("reason", "completed")
+            by_reason[r] = by_reason.get(r, 0) + 1
         detail = ", ".join(f"{k}={v}" for k, v in sorted(by_status.items()))
-        print(f"[已过滤] {len(filtered)} 条已终态子任务未纳入清单（{detail}）:"
-              " 主任务与未完成子任务全部保留")
+        reason_detail = ", ".join(f"{k}={v}" for k, v in sorted(by_reason.items()))
+        print(f"[已过滤] {len(filtered)} 条子任务未纳入清单（{detail}；原因 {reason_detail}）")
         for item in filtered[:8]:
             print(f"       - {item['task_id']}  status={item['status']} "
-                  f"raw={item['raw_status']}")
+                  f"raw={item['raw_status']}  reason={item.get('reason', 'completed')}")
         if len(filtered) > 8:
             print(f"       ... 另有 {len(filtered) - 8} 条，未逐条列出")
-        print("       这些任务已是终态，过滤不影响睡眠判定；如需保留请把 config 里 "
-              "adapters[workbuddy_local].options.include_completed_todos 设为 true。")
-        ev.emit("TODO_FILTERED", f"扫描过滤 {len(filtered)} 条已终态子任务",
-                echo=False, count=len(filtered), by_status=detail)
+        if by_reason.get("completed"):
+            print("       终态项过滤不影响睡眠判定；如需保留请设 "
+                  "adapters[workbuddy_local].options.include_completed_todos=true。")
+        if by_reason.get("pending"):
+            print("       queued 项是「计划清单里尚未勾选开始」的待办；会话级主任务 "
+                  "wb-session:* 仍保留兜底，running/in_progress/unknown 子任务也照常纳入。")
+            print("       若该数据源的 pending 确实代表真实排队任务，请设 "
+                  "include_pending_todos=true 恢复保守行为。")
+        ev.emit("TODO_FILTERED", f"扫描过滤 {len(filtered)} 条子任务",
+                echo=False, count=len(filtered), by_status=detail,
+                by_reason=reason_detail)
     headers = ["task_id", "agent", "start_time", "status", "last_active", "source"]
     rows = [[t.get("task_id"), t.get("agent"), t.get("start_time"), t.get("status"),
              t.get("last_active") or "-", t.get("source")] for t in tasks]

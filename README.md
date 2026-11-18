@@ -204,22 +204,25 @@ WorkBuddy 会话若数据库里已是 `completed/terminated` 则直接采信，�
 
 `scan` 只在 `unknown`（无事件可分析）时才把条目标为保守项并汇总提示；其余情况由规则给出可复核的判定依据，人仍可在核对阶段用 `scan revise --remove <task_id>` 剔除任何不认可的条目。
 
-#### 清单瘦身：过滤已终态的子任务（本机默认开启）
+#### 清单瘦身：过滤「已终态」与「未开始」的待办子任务
 
-WorkBuddy 适配器除会话级主任务 `wb-session:*` 外，还会把该会话下积累的待办 `~/.workbuddy/tasks/<sid>/*.json` 全部列成 `wb-todo:*` 子任务。这些文件不会随任务完成而删除，会越积越多（本机曾出现 1 条主任务 + 9 条已完成子任务）；但**已终态的子任务本就不参与睡眠判定**，只会干扰人工核对。
+WorkBuddy 适配器除会话级主任务 `wb-session:*` 外，还会把该会话下积累的待办 `~/.workbuddy/tasks/<sid>/*.json` 列成 `wb-todo:*` 子任务。这些文件不会随任务完成而删除，会越积越多（本机曾出现 1 条主任务 + 9 条已完成子任务）。
 
-`config.real.json` 已设 `adapters[workbuddy_local].options.include_completed_todos = false`，扫描时过滤：
+**关键语义**：这些 todo 是**人工勾选的计划清单**，`pending` 只表示「这条计划没勾完成」，不代表「有个任务正在排队执行」；会话结束也不会自动把它改成 `completed`。11-14 那轮值守死等 11 小时，卡的就是一条 11-11 创建、实际代码早已做完却忘了勾掉的开发待办（subject：改造 util 支持冻结态路径解析）。把它当成未终结任务既无收益，又会让监控永远等下去。
+
+`config.real.json` 里 `adapters[workbuddy_local].options` 现设 `include_completed_todos=false` + `include_pending_todos=false`，扫描时：
 
 | 条目 | 是否保留 | 原因 |
 | --- | --- | --- |
-| `wb-session:*` 会话级主任务 | **始终保留** | 真正决定「这个 Agent 忙不忙」的兜底项 |
-| 子任务 `running / queued`（`in_progress / pending`） | 保留 | 未完成，必须继续盯 |
+| `wb-session:*` 会话级主任务 | **始终保留** | 真正决定「这个 Agent 忙不忙」的兜底项；会话还在跑时监控仍会等它 |
+| 子任务 `running`（`in_progress`） | 保留 | 确实正在执行 |
 | 子任务 `unknown`（状态读不到） | **强制保留** | 宁可整夜不睡，绝不因解析失败把任务悄悄删掉 |
+| 子任务 `queued`（`pending`） | **过滤** | 计划清单里尚未勾选开始的项，不会自动变终态 |
 | 子任务 `completed / failed / cancelled` | 过滤 | 已是终态，留着不产生任何阻塞作用 |
 
-过滤集合默认取 `terminal_statuses`（与监控判终态**同源**），可用 `options.todo_terminal_statuses` 覆盖；`unknown` 即使被写进该集合也会被硬排除。代码层默认值仍是 `true`（保留全部），是向后兼容的保守行为；自动发现生成的配置（`discovery.py` 的 `spec()`）已同步为 `false`，所以点界面「自动发现并扫描」不会把开关又打开。
+**风险与回退**：只排除映射后的 `queued`（原始 `pending`），`running` / `unknown` 和会话级主任务一律保留，所以「会话正在跑」的场景不会被误判提前睡。如果某个数据源的 `pending` 确实代表「已排队、马上要执行」的真实任务，把 `include_pending_todos` 设为 `true` 即可恢复保守行为。代码默认值现为 `false`（排除），`config.real.json` 与自动发现生成的配置（`discovery.py` 的 `spec()`）都显式写了 `false`，所以点「自动发现并扫描」不会把开关又打开。
 
-过滤绝不悄悄生效：`scan` 打印 `[已过滤] N 条已终态子任务…` 并逐条列出（超过 8 条列前 8 条 + 计数），同时写 `TODO_FILTERED` 事件日志。想保留全部子任务，把该选项改回 `true` 即可。
+过滤绝不悄悄生效：`scan` 打印 `[已过滤] N 条子任务未纳入清单（原因 completed=… pending=…）` 并逐条列出 `reason`（超过 8 条列前 8 条 + 计数），同时写 `TODO_FILTERED` 事件（带 `by_reason`）。逐条留痕存在 `filtered_todos`，不会静默吞掉。
 
 > 快照是冻结的：此改动只对**之后新生成的快照**生效，旧快照不会自动变干净。点界面「重新扫描」生成新快照即可；旧快照仍可用 `scan revise --remove` 逐条剔除。
 
@@ -504,10 +507,10 @@ Hero 右侧改为**当前阶段提示**（阶段编号 / 名称 / 说明 / 下�
 
 **五条切换规则**：
 
-1. 点步骤标签 = 用户主动查看：切到对应子页面 + 滚动定位到锚点（1→扫描工具条、2→核对表单、3→值守操作、4→自检报告）。**点击不篡改「当前步骤」**——蓝色高亮代表系统真实阶段，手动查看不该让状态说谎。
+1. 点步骤标签 = 用户主动查看：只切到对应子页面（1/2→`prepare`，3/4→`watch`），**不做滚动定位**（原实现会滚到 secScan / secVerify / secWatchAction / secSelfcheck，已去掉；`data-target` 属性同步移除）。**点击不篡改「当前步骤」**——蓝色高亮代表系统真实阶段，手动查看不该让状态说谎。
 2. 手动选择后 `pageLock=true`，**每 3 秒的 `refresh()` 绝不抢页面**（否则用户点回步骤 1 想改清单，3 秒后又被推走）。
-3. 唯一的自动切换：当前步骤真的从 ≤2 跨到 ≥3 那一刻，切到 `watch` 一次并解除锁定；首次刷新只记基线，不把初始化当跃迁。
-4. 开启监控成功后显式 `setStep(3) + setPage('watch')`，不依赖轮询的跨越检测（初始当前步已是 3 时也能正确切页）。
+3. 自动切换有两处显式入口：**人工核对锁定成功后** `setPage('watch')` 并解除手动锁、把 `prevStepForPage` 对齐当前步（让核对完紧接着就能开启监控）；以及开启监控成功后 `setStep(3) + setPage('watch')`。两处都不依赖轮询的跨越检测，初始当前步已是 3 时也能正确切页。
+4. 轮询侧的自动切换是兜底：当前步骤真的从 ≤2 跨到 ≥3 且**未被手动锁定**（`!pageLock`）时切到 `watch` 一次；首次刷新只记基线，不把初始化当跃迁。
 5. 自检成功后显式切到 `watch`，保证报告可见。
 
 **初始化落位**：首屏 `refresh()` + `loadSnapshot()` 完成后按真实 `currentStep` 落位——≥3 直接显示子页面二（含开启监控 / 直接睡眠），1/2 显示子页面一，并把 `prevStepForPage` 对齐，之后只认真正发生的 2→3 跨越。这样无论「清单已核对」还是「监控已在跑」，页面都与步骤条一致，不会出现高亮第 3 步却停在准备清单页、找不到值守按钮的情况。想重新扫描点步骤 1 即可。
@@ -782,6 +785,7 @@ SNAPSHOT_REVISE | from=SNAP-…-v1 to=SNAP-…-v2 from_version=1 to_version=2
 | `adapters[]` | 示例 `mock_file` | 启用的 Agent 数据源 |
 | `adapters[].options.idle_confirm_seconds` | 300 | 日志停在**结束事件**后，需再静默多少秒才判完成；停在任务开始/中间时该值完全不生效（见 3.3） |
 | `adapters[workbuddy_local].options.include_completed_todos` | `false`（`config.real.json`；代码默认 `true`） | 是否把已终态的 `wb-todo:*` 子任务纳入清单；`false` = 只保留主任务与未完成子任务（见 3.3） |
+| `adapters[workbuddy_local].options.include_pending_todos` | `false`（代码默认 / `config.real.json` / 自动发现生成配置均为 `false`） | 是否把 `queued`（原始 `pending`，计划清单里尚未勾选开始）的 `wb-todo:*` 纳入清单；`true` = 恢复保守行为。会话级主任务与 `running`/`unknown` 子任务不受影响（见 3.3） |
 | `adapters[workbuddy_local].options.todo_terminal_statuses` | 同 `terminal_statuses` | 自定义「已终态」集合；`unknown` 恒被硬排除，绝不因读不到状态而删除子任务 |
 
 ---
@@ -1157,7 +1161,7 @@ class MyAgentProbe(AgentProbe):
 | --- | --- | --- |
 | 值守 SOP + 入口收敛 | 第 7.7 节 | 日常唯一主路径；验收脚手架降级为可选自测；一次确认替代持久总闸 |
 | 隐私与数据边界 | 界面「隐私与数据」 + `asg/privacy.py` | 合规评审、数据清单、归档清空 |
-| 异常与恢复验收用例集 | `cases/acceptance-cases.json`（57 条） | 下发给开发/测试逐条验收 |
+| 异常与恢复验收用例集 | `cases/acceptance-cases.json`（59 条） | 下发给开发/测试逐条验收 |
 | 产品指标口径与周报 | `asg/metrics.py` + `metrics` CLI | 迭代依据 |
 | 托盘常驻 + 一键安装 | `tray.py` / `install.py` / 三个 bat（3.13、3.14） | 「记得来用」变成「一直在」；开机自启可选；分发边界见 3.14 |
 
@@ -1187,7 +1191,7 @@ class MyAgentProbe(AgentProbe):
 
 ### 14.3 异常与恢复验收用例集
 
-`cases/acceptance-cases.json` 共 **57 条**，分 5 组：快照与人工核对 10、监控与终态 11、睡眠触发与效果 13、规则表与数据源 9、自检与恢复 14。每条含 `id / group / title / precondition / steps / expected / evidence / mode / command / risk`；`mode=auto` 的可按 `evidence` 里的日志关键字做自动回归。
+`cases/acceptance-cases.json` 共 **59 条**，分 5 组：快照与人工核对 12、监控与终态 11、睡眠触发与效果 13、规则表与数据源 9、自检与恢复 14。每条含 `id / group / title / precondition / steps / expected / evidence / mode / command / risk`；`mode=auto` 的可按 `evidence` 里的日志关键字做自动回归。
 
 ```bash
 python agent_sleep_guard.py cases --json          # 导出评审用 JSON

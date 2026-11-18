@@ -196,15 +196,10 @@ function setStep(n){
   currentStep = Number(n) || 1;
   renderSteps();
 }
-/* 只切换子页面 + 滚动定位，不篡改「当前步骤」：
+/* 只切换子页面，不做滚动定位；也不篡改「当前步骤」：
    蓝色高亮代表系统真实阶段，手动点击只是查看另一页，不该让状态说谎。 */
 document.querySelectorAll('.step').forEach(el => {
-  el.addEventListener('click', () => {
-    setPage(el.dataset.page, true);
-    const target = $(el.dataset.target);
-    if(target) requestAnimationFrame(() =>
-      target.scrollIntoView({behavior: prefersReduced() ? 'auto' : 'smooth', block:'start'}));
-  });
+  el.addEventListener('click', () => setPage(el.dataset.page, true));
 });
 
 /* ---------------- 待机方式 ---------------- */
@@ -489,6 +484,11 @@ $('btnVerify').addEventListener('click', once($('btnVerify'), async () => {
   currentSid = target;
   await refresh(); $('snapSel').value = target; await loadSnapshot(target);
   markStepDone(2);
+  // 核对锁定完成，当前步骤进入 STEP 03 —— 自动落到子页面二（值守与自检），
+  // 让用户紧接着就能开启监控；同时解除手动锁，避免后续轮询把页面拉回准备清单。
+  setPage('watch');
+  pageLock = false;
+  prevStepForPage = currentStep;
   notice(`已核对锁定 ${target}（重试风险采用默认：沿用原任务 ID，无额外处理）`);
 }));
 

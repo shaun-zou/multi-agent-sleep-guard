@@ -97,6 +97,14 @@ class WorkBuddyLocalAdapter(BaseAdapter):
         # 更不容易误睡）；本机真实配置 config.real.json 已设为 false，扫描结果因此只含
         # 会话级主任务 + 尚未完成的子任务。
         self.include_completed_todos = bool(options.get("include_completed_todos", True))
+        # WorkBuddy 的 todo 是「人工勾选的计划清单」：pending 只代表"没勾完成"，
+        # 会话结束不会自动变成 completed。把这类项当成未终结任务会让值守永远等下去
+        # （11-14 卡 11 小时：一条 11-11 就该勾掉、实际代码早已做完的开发待办）。
+        # 默认不纳入清单；会话级主任务 wb-session:* 始终保留，作为"会话还在跑"的兜底，
+        # running/in_progress/unknown 的 todo 也照常纳入。
+        # 若某数据源的 pending 确实代表"已排队、马上要执行"的真实任务，
+        # 把 include_pending_todos 设为 true 即可恢复保守行为。
+        self.include_pending_todos = bool(options.get("include_pending_todos", False))
         # 「已终态」判定与监控同源：默认取 config.terminal_statuses（completed/failed/
         # cancelled），可用 options.todo_terminal_statuses 显式覆盖。
         # unknown 被硬排除 —— 状态读不到时绝不把子任务从清单里悄悄删掉（宁可整夜不睡）。
@@ -107,7 +115,7 @@ class WorkBuddyLocalAdapter(BaseAdapter):
             str(s).lower() for s in (configured if configured else default_terminal)
         }
         self.todo_terminal_statuses.discard("unknown")
-        # 最近一次 scan_tasks 被过滤掉的终态子任务（逐条留痕，防止悄悄吞掉）
+        # 最近一次 scan_tasks 被过滤掉的子任务（逐条留痕，防止悄悄吞掉）
         self.filtered_todos = []
         self.exclude_cwds = [str(x).lower() for x in options.get("exclude_cwds", [])]
         # 夜间值守：交互窗口已无用户输入，最后事件停在结束位置后需静默多久才判完成
@@ -337,15 +345,23 @@ class WorkBuddyLocalAdapter(BaseAdapter):
                         "出现新用户输入(role=user)立即回到 running，不会睡",
             })
             # ② 该会话下的待办任务
-            #    会话级主任务（wb-session）始终保留；这里只过滤「已终态」的子任务。
-            #    被过滤项进 self.filtered_todos 留痕，由 scan 输出/事件日志逐条列出。
+            #    会话级主任务（wb-session）始终保留；这里过滤「已终态」与
+            #    「queued=计划清单里尚未勾选开始」两类子任务。
+            #    被过滤项进 self.filtered_todos 逐条留痕（带 reason），
+            #    由 scan 输出 / 事件日志列出，绝不静默吞掉。
             for t in self._todos(sid):
                 tid = f"wb-todo:{sid}:{t['todo_id']}"
                 if (not self.include_completed_todos
                         and t["status"] in self.todo_terminal_statuses):
                     self.filtered_todos.append({
                         "task_id": tid, "status": t["status"],
-                        "raw_status": t["raw_status"],
+                        "raw_status": t["raw_status"], "reason": "completed",
+                    })
+                    continue
+                if not self.include_pending_todos and t["status"] == "queued":
+                    self.filtered_todos.append({
+                        "task_id": tid, "status": t["status"],
+                        "raw_status": t["raw_status"], "reason": "pending",
                     })
                     continue
                 result.append({
